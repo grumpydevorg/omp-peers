@@ -226,7 +226,7 @@ export function registerPeerRequestTool(pi: ExtensionHostLike, deps: PeerRequest
           // Not a queueable delivery — e.g. unknown peer, refused, or it
           // matched a pending request on the far end and was consumed.
           pending.delete(replyTo);
-          reject(new Error('not delivered'));
+          resolve(receipt); // never reject an unawaited promise — unhandledRejection terminates bun (crash 2026-09-22)
           return { content: [{ type: 'text', text: receipt }] };
         }
 
