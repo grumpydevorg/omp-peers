@@ -33,6 +33,8 @@ export interface InboundCarrier {
   from: string;
   body: string;
   replyTo?: string;
+  /** PURE RECEIPT — DISPLAY-ONLY TOAST PATH, NEVER A WAKE. */
+  ack?: boolean;
 }
 
 export interface CurrentHost {
@@ -46,7 +48,7 @@ export interface HeldBatch {
   receivedAt: number;
 }
 
-export type InboundOutcome = 'injected' | 'woken' | 'aside' | 'dropped' | 'held';
+export type InboundOutcome = 'injected' | 'woken' | 'aside' | 'dropped' | 'held' | 'acked';
 
 export interface InboundDeps {
   /** Live getter for the freshest host handles — called on every delivery. */
@@ -139,6 +141,19 @@ export async function deliverInboundPeerMessage(
   const from = frame.from ?? '';
   const body = frame.body ?? '';
   if (from === '' || body === '') return { outcome: 'dropped', detail: 'empty frame' };
+
+  if (frame.ack === true) {
+    // DISPLAY-ONLY TOAST — NEVER sendUserMessage, NEVER WAKE BUDGET, NEVER HOLD.
+    try {
+      cur.ctx.ui.notify(
+        `↩ ack ${from}: ${body.length > 160 ? body.slice(0, 160) + '…' : body}`,
+        'info'
+      );
+    } catch {
+      // Toast is best-effort.
+    }
+    return { outcome: 'acked' };
+  }
 
   const wakes = deps.wakes ?? new Map<string, number[]>();
   const text = formatPeerText(from, body, { replyTo: frame.replyTo });

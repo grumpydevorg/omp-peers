@@ -41,6 +41,8 @@ export interface InboundMessage {
   body: string;
   replyTo?: string;
   hop: number;
+  /** PURE RECEIPT — NEVER WAKES THE RECEIVER; RENDERED AS ONE DIM TOAST. */
+  ack?: boolean;
 }
 
 export interface PeerServerOptions {
@@ -144,6 +146,22 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
     }
     if (typeof frame.from !== 'string' || frame.from === '' || typeof frame.body !== 'string') {
       reply(socket, { ok: false, error: 'bad frame' });
+      return;
+    }
+    if (frame.ack === true) {
+      // ACKS BYPASS THE COALESCE QUEUE ENTIRELY: A RECEIPT MUST DELIVER
+      // IMMEDIATELY, NEVER BATCH, NEVER DELAY A REAL MESSAGE SLOT.
+      try {
+        const outcome = await opts.onMessage({
+          from: frame.from,
+          body: frame.body,
+          hop,
+          ack: true,
+        });
+        reply(socket, { ok: true, outcome });
+      } catch (err) {
+        reply(socket, { ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
       return;
     }
     const known = pending.get(frame.from);

@@ -505,7 +505,7 @@ export default function peersExtension(pi) {
         return (await listLivePeers(st.stateDir, st.pid)).filter((p) => p.pid !== st.pid);
     };
     registerPeerSendTool(pi, {
-        send: (to, message, replyTo) => {
+        send: (to, message, replyTo, ack) => {
             const st = liveNode();
             return sendToPeer(to, message, {
                 ownName: st?.name ?? '',
@@ -513,6 +513,7 @@ export default function peersExtension(pi) {
                 isReply: replyTo !== undefined,
                 listPeers: freshPeers,
                 ...(replyTo !== undefined ? { replyTo } : {}),
+                ...(ack ? { ack: true } : {}),
                 reap: (record) => {
                     if (st !== undefined)
                         void removePeerRecord(st.stateDir, record.pid);

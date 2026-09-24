@@ -13,7 +13,7 @@ import type { ExtensionHostLike } from './peers/host.js';
 import type { OutboundDeps } from './peers/outbound.js';
 import type { PeerRecord, PendingReply } from './types.js';
 export interface PeerSendDeps {
-    send: (to: string, message: string, replyTo?: string) => Promise<string>;
+    send: (to: string, message: string, replyTo?: string, ack?: boolean) => Promise<string>;
 }
 export declare function registerPeerSendTool(pi: ExtensionHostLike, deps: PeerSendDeps): void;
 export interface PeerStatusDeps {

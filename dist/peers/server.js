@@ -118,6 +118,23 @@ export function startPeerServer(opts) {
             reply(socket, { ok: false, error: 'bad frame' });
             return;
         }
+        if (frame.ack === true) {
+            // ACKS BYPASS THE COALESCE QUEUE ENTIRELY: A RECEIPT MUST DELIVER
+            // IMMEDIATELY, NEVER BATCH, NEVER DELAY A REAL MESSAGE SLOT.
+            try {
+                const outcome = await opts.onMessage({
+                    from: frame.from,
+                    body: frame.body,
+                    hop,
+                    ack: true,
+                });
+                reply(socket, { ok: true, outcome });
+            }
+            catch (err) {
+                reply(socket, { ok: false, error: err instanceof Error ? err.message : String(err) });
+            }
+            return;
+        }
         const known = pending.get(frame.from);
         if (known) {
             known.bodies.push(frame.body);

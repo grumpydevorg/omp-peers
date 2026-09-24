@@ -89,6 +89,16 @@ export async function deliverInboundPeerMessage(frame, deps) {
     const body = frame.body ?? '';
     if (from === '' || body === '')
         return { outcome: 'dropped', detail: 'empty frame' };
+    if (frame.ack === true) {
+        // DISPLAY-ONLY TOAST — NEVER sendUserMessage, NEVER WAKE BUDGET, NEVER HOLD.
+        try {
+            cur.ctx.ui.notify(`↩ ack ${from}: ${body.length > 160 ? body.slice(0, 160) + '…' : body}`, 'info');
+        }
+        catch {
+            // Toast is best-effort.
+        }
+        return { outcome: 'acked' };
+    }
     const wakes = deps.wakes ?? new Map();
     const text = formatPeerText(from, body, { replyTo: frame.replyTo });
     let willWake = true;

@@ -1135,6 +1135,120 @@ describe('activity, todos, and request/reply tools', () => {
     assert.match(res.content[0].text, /timed out/);
   });
 });
+
+describe('ack-class messages', () => {
+  // Same fake-host rig as the inbound suite above; acks must never reach
+  // sendUserMessage, so `cur.sent` stays empty and only `cur.noted` moves.
+  const live = () => {
+    const cur = fakeCtx('sess-beta');
+    return { cur, deps: { getCurrent: () => ({ pi: cur.pi, ctx: cur.ctx }) } };
+  };
+
+  it('acknowledges an inbound ack as an info toast without waking the host', async () => {
+    const { cur, deps } = live();
+    const res = await deliverInboundPeerMessage(
+      { from: 'alpha', body: 'ping — loop closed', ack: true },
+      deps
+    );
+    assert.equal(res.outcome, 'acked');
+    assert.equal(cur.sent.length, 0);
+    assert.equal(cur.noted.length, 1);
+    assert.match(cur.noted[0].message, /↩ ack alpha/);
+    assert.ok(cur.noted[0].message.includes('ping — loop closed'));
+    assert.equal(cur.noted[0].type, 'info');
+  });
+
+  it('clamps an oversized ack body in the toast text', async () => {
+    const { cur, deps } = live();
+    const body = 'HEAD-' + 'x'.repeat(200);
+    const res = await deliverInboundPeerMessage({ from: 'alpha', body, ack: true }, deps);
+    assert.equal(res.outcome, 'acked');
+    assert.equal(cur.noted.length, 1);
+    const text = cur.noted[0].message;
+    assert.match(text, /↩ ack alpha/);
+    assert.ok(text.length <= 180, `ack toast not clamped: ${text.length} chars`);
+    assert.ok(text.endsWith('…'));
+    assert.ok(text.includes('HEAD-'));
+    assert.equal(text.includes('x'.repeat(200)), false);
+  });
+
+  it('stays an ack when the wake budget is exhausted (never aside)', async () => {
+    const cur = fakeCtx('sess-beta');
+    const now = Date.now();
+    // 20 recorded wakes = budget gone; a plain message here would be an aside.
+    const wakes = new Map([['alpha', Array.from({ length: 20 }, (_, i) => now - i * 1000)]]);
+    const res = await deliverInboundPeerMessage(
+      { from: 'alpha', body: 'still just a receipt', ack: true },
+      { getCurrent: () => ({ pi: cur.pi, ctx: cur.ctx }), wakes, now: () => now }
+    );
+    assert.equal(res.outcome, 'acked');
+    assert.notEqual(res.outcome, 'aside');
+    assert.equal(cur.sent.length, 0);
+    assert.equal(cur.noted.length, 1);
+    // A receipt is not a wake — it spends no budget.
+    assert.equal((wakes.get('alpha') ?? []).length, 20);
+  });
+
+  it('server lets two back-to-back acks from one peer bypass the coalesce queue', async () => {
+    const addr = peerSocketAddress(STATE, 47888);
+    const srv = startPeerServer({
+      address: addr,
+      ownName: () => 'quiet',
+      onMessage: async (msg) => (msg.ack ? 'acked' : 'injected'),
+    });
+    // Named pipes (win32) bind asynchronously; unix sockets too — wait for it.
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const [r1, r2] = await Promise.all([
+        requestPeer(addr, { t: 'msg', from: 'burst', body: 'ack one', hop: 0, ack: true }),
+        requestPeer(addr, { t: 'msg', from: 'burst', body: 'ack two', hop: 0, ack: true }),
+      ]);
+      assert.equal(r1?.ok, true);
+      assert.equal(r2?.ok, true);
+      assert.equal(r1?.outcome, 'acked');
+      assert.equal(r2?.outcome, 'acked');
+      assert.notEqual(r1?.outcome, 'coalesced');
+      assert.notEqual(r2?.outcome, 'coalesced');
+    } finally {
+      srv.stop();
+    }
+  });
+
+  it('sendToPeer carries ack on the wire and formats a toast receipt', async () => {
+    const addr = peerSocketAddress(STATE, 47889);
+    const seen = [];
+    const srv = startPeerServer({
+      address: addr,
+      ownName: () => 'delta',
+      onMessage: async (msg) => {
+        seen.push(msg);
+        return msg.ack ? 'acked' : 'injected';
+      },
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const record = {
+        v: 1, pid: 47889, name: 'delta', cwd: '/w/d', project: 'd', harness: 'omp',
+        sessionId: '', model: '', socket: addr, startedAt: 1, beatAt: Date.now(), busy: false,
+      };
+      const receipt = await sendToPeer('delta', 'receipt-confirm', {
+        ownName: 'alpha',
+        hop: 0,
+        ack: true,
+        listPeers: async () => [record],
+      });
+      assert.match(receipt, /Ack delivered to .*toast/);
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0].ack, true);
+      assert.equal(seen[0].from, 'alpha');
+      assert.equal(seen[0].body, 'receipt-confirm');
+    } finally {
+      srv.stop();
+    }
+  });
+});
+
 after(async () => {
   await rm(STATE, { recursive: true, force: true });
 });

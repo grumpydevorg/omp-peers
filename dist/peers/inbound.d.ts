@@ -30,6 +30,8 @@ export interface InboundCarrier {
     from: string;
     body: string;
     replyTo?: string;
+    /** PURE RECEIPT — DISPLAY-ONLY TOAST PATH, NEVER A WAKE. */
+    ack?: boolean;
 }
 export interface CurrentHost {
     pi: ExtensionHostLike;
@@ -40,7 +42,7 @@ export interface HeldBatch {
     message: InboundMessage;
     receivedAt: number;
 }
-export type InboundOutcome = 'injected' | 'woken' | 'aside' | 'dropped' | 'held';
+export type InboundOutcome = 'injected' | 'woken' | 'aside' | 'dropped' | 'held' | 'acked';
 export interface InboundDeps {
     /** Live getter for the freshest host handles — called on every delivery. */
     getCurrent: () => CurrentHost | undefined;

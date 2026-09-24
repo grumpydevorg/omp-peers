@@ -22,6 +22,10 @@ export function registerPeerSendTool(pi, deps) {
                 to: { type: 'string', description: 'Peer name, as listed by `/peers`' },
                 message: { type: 'string', description: 'Message body' },
                 replyTo: { type: 'string', description: 'Message id being answered' },
+                ack: {
+                    type: 'boolean',
+                    description: 'True when this message is a pure ack/receipt/closure ("received", "done", "loop closed"). Renders as a dim toast on the receiver — never wakes it, never enters its transcript, needs no reply. Prefer this over a normal send for confirmations.',
+                },
             },
             required: ['to', 'message'],
             additionalProperties: false,
@@ -31,7 +35,8 @@ export function registerPeerSendTool(pi, deps) {
                 const to = typeof params['to'] === 'string' ? params['to'] : '';
                 const message = typeof params['message'] === 'string' ? params['message'] : '';
                 const replyTo = typeof params['replyTo'] === 'string' ? params['replyTo'] : undefined;
-                return { content: [{ type: 'text', text: await deps.send(to, message, replyTo) }] };
+                const ack = typeof params['ack'] === 'boolean' ? params['ack'] : undefined;
+                return { content: [{ type: 'text', text: await deps.send(to, message, replyTo, ack) }] };
             }
             catch (err) {
                 return {

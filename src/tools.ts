@@ -17,7 +17,7 @@ import type { OutboundDeps } from './peers/outbound.js';
 import type { PeerRecord, PeerTodo, PendingReply } from './types.js';
 
 export interface PeerSendDeps {
-  send: (to: string, message: string, replyTo?: string) => Promise<string>;
+  send: (to: string, message: string, replyTo?: string, ack?: boolean) => Promise<string>;
 }
 
 export function registerPeerSendTool(pi: ExtensionHostLike, deps: PeerSendDeps): void {
@@ -32,6 +32,11 @@ export function registerPeerSendTool(pi: ExtensionHostLike, deps: PeerSendDeps):
         to: { type: 'string', description: 'Peer name, as listed by `/peers`' },
         message: { type: 'string', description: 'Message body' },
         replyTo: { type: 'string', description: 'Message id being answered' },
+        ack: {
+          type: 'boolean',
+          description:
+            'True when this message is a pure ack/receipt/closure ("received", "done", "loop closed"). Renders as a dim toast on the receiver — never wakes it, never enters its transcript, needs no reply. Prefer this over a normal send for confirmations.',
+        },
       },
       required: ['to', 'message'],
       additionalProperties: false,
@@ -41,7 +46,8 @@ export function registerPeerSendTool(pi: ExtensionHostLike, deps: PeerSendDeps):
         const to = typeof params['to'] === 'string' ? (params['to'] as string) : '';
         const message = typeof params['message'] === 'string' ? (params['message'] as string) : '';
         const replyTo = typeof params['replyTo'] === 'string' ? (params['replyTo'] as string) : undefined;
-        return { content: [{ type: 'text', text: await deps.send(to, message, replyTo) }] };
+        const ack = typeof params['ack'] === 'boolean' ? (params['ack'] as boolean) : undefined;
+        return { content: [{ type: 'text', text: await deps.send(to, message, replyTo, ack) }] };
       } catch (err) {
         return {
           content: [{ type: 'text', text: `peer_send failed: ${err instanceof Error ? err.message : String(err)}` }],
