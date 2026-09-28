@@ -282,6 +282,13 @@ export function requestPeer(
   frame: PeerFrame,
   timeoutMs: number = PEER_REQUEST_TIMEOUT_MS
 ): Promise<PeerReply | undefined> {
+  // An oversized frame is refused here, before any byte is written. Left to
+  // the receiver, it closes the socket mid-write and the sender sees EPIPE
+  // (macOS) instead of the "too large" reply the receiver tried to send.
+  const payload = `${JSON.stringify(frame)}\n`;
+  if (Buffer.byteLength(payload, 'utf8') > MAX_FRAME_BYTES) {
+    return Promise.resolve({ ok: false, error: 'frame too large' });
+  }
   return new Promise<PeerReply | undefined>((resolve) => {
     let settled = false;
     let timer: NodeJS.Timeout | undefined;
@@ -307,7 +314,7 @@ export function requestPeer(
     });
     socket.on('connect', () => {
       try {
-        socket.write(`${JSON.stringify(frame)}\n`);
+        socket.write(payload);
       } catch (err) {
         finish({ ok: false, error: err instanceof Error ? err.message : String(err) });
       }
