@@ -28,6 +28,7 @@ export declare const MAX_HELD_BATCHES = 20;
 export declare const HOLD_POLL_MS = 500;
 export interface InboundCarrier {
     from: string;
+    fromId?: string;
     body: string;
     replyTo?: string;
     /** PURE RECEIPT — DISPLAY-ONLY TOAST PATH, NEVER A WAKE. */

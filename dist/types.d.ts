@@ -38,7 +38,10 @@ export interface PeerRecord {
     cwd: string;
     project: string;
     harness: HarnessKind;
-    /** Owning session id (empty string when the host exposes none). */
+    /**
+     * Root omp session id — the peer's stable identity; survives `omp --resume`.
+     * Never a subagent's. Empty string when the host exposes none.
+     */
     sessionId: string;
     /** Model id (empty string when the host exposes none). */
     model: string;
@@ -48,7 +51,7 @@ export interface PeerRecord {
      * (`<state>/peers/<pid>.sock`) elsewhere.
      */
     socket: string;
-    /** `Date.now()` at process start — decides cross-process name collisions. */
+    /** `Date.now()` at process start (display only). */
     startedAt: number;
     /** `Date.now()` at the last beat — drives TTL reap + beat age. */
     beatAt: number;
@@ -58,11 +61,18 @@ export interface PeerRecord {
     activity?: string;
     /** Optional published todo list. */
     todos?: PeerTodo[];
+    /** The name before any collision suffix; absent in records from 1.4.0 and older. */
+    base?: string;
+    /** The terminal tab label (herdr), when it is a usable name; display and lookup only. */
+    label?: string;
+    /** Other names this peer answers to: its tab label and names it held in the last minutes. */
+    aliases?: string[];
 }
 /** Frame exchanged over a peer socket, one JSON object per line. */
 export type PeerFrame = {
     t: 'msg';
     from: string;
+    fromId?: string;
     body: string;
     replyTo?: string;
     hop?: number;

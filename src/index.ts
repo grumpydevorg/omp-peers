@@ -23,11 +23,18 @@ export {
   PEER_NAME_PATTERN,
   isValidPeerName,
   validatePeerName,
-  defaultPeerName,
-  peerNameFromSession,
+  directoryBase,
+  chooseBase,
   resolvePeerName,
+  recordBase,
+  peerKey,
+  lookupPeer,
+  type PeerLookup,
   type ResolveNameInput,
 } from './peers/ids.js';
+
+// Environment lookups (git top level, herdr tab label).
+export { createEnvLookups, type EnvLookups, type EnvLookupOptions } from './peers/context.js';
 
 // Presence.
 export {

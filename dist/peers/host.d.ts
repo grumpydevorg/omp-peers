@@ -42,12 +42,12 @@ export interface CommandContextLike {
         id?: string;
     };
     isIdle: () => boolean;
-    setInterval?: (callback: () => void, ms?: number) => unknown;
-    clearTimer?: (timer: unknown) => void;
-    /** The session's agent identity (omp `ExtensionContext.agent`): `main` for the root, `sub` for a task subagent. */
+    /** Which agent this session runs; `sub` for subagents (omp). */
     agent?: {
         kind?: string;
     };
+    setInterval?: (callback: () => void, ms?: number) => unknown;
+    clearTimer?: (timer: unknown) => void;
     [key: string]: unknown;
 }
 export interface ToolInvokeResult {

@@ -7,25 +7,25 @@
  * host's agent registry, so `agent://` messaging, Agent Hub and subagents
  * stay local to their own instance. Explicit names only, no `to:all`.
  *
- * Peer name = session name: the host's builtin `/rename <name>` is the only
- * naming surface. A raw session name is adopted as the peer address when it
- * matches `^[\w.-]{1,24}$`; anything else keeps the default name (one
- * popup warning per process — later ones log only, so model-written
- * auto-titles don't nag on every change).
+ * Identity is the ROOT session id; the name is derived from it (see
+ * `peers/ids.ts`): the `/rename` name, else the checkout, else the directory,
+ * with a session-id suffix when peers share a base. A rejected `/rename` name
+ * pops one warning per process; later ones log only.
  *
  * Session discipline: NOTHING session-shaped is captured at boot or in the
- * factory closure. The freshest `{pi, ctx}` is re-read from the live getter
- * on every delivery tick (updated by every host event below), and the own
- * agent id is re-discovered per delivery and cross-checked against
- * `sessionManager.getSessionId()`.
+ * factory closure. The freshest root-session `{pi, ctx}` is re-read from the
+ * live getter on every delivery tick (updated by every root-session host
+ * event below). Subagent sessions load this extension too; their events are
+ * ignored, so a subagent never becomes the published identity.
  */
 
 import { registerPeersCommand } from './commands/peers.js';
 import type { CommandContextLike, ExtensionHostLike } from './peers/host.js';
 import { detectHarness, readNativeTodos, readTitleSource } from './peers/host.js';
-import { defaultPeerName, isValidPeerName, peerNameFromSession, resolvePeerName } from './peers/ids.js';
+import { chooseBase, directoryBase, isValidPeerName, peerKey, resolvePeerName } from './peers/ids.js';
+import { createEnvLookups, type EnvLookups } from './peers/context.js';
 import { deliverInboundPeerMessage, HOLD_POLL_MS, MAX_HELD_BATCHES, type HeldBatch } from './peers/inbound.js';
-import { outboundHop, sendToPeer } from './peers/outbound.js';
+import { sendToPeer } from './peers/outbound.js';
 import {
   HEARTBEAT_MS,
   listLivePeers,
@@ -36,7 +36,7 @@ import {
 import { appendNoteToMessages, buildPeersNote } from './peers/roster.js';
 import type { RosterMessage } from './peers/roster.js';
 import { peerSocketAddress, startPeerServer } from './peers/server.js';
-import type { PeerServerHandle } from './peers/server.js';
+import type { InboundMessage, PeerServerHandle } from './peers/server.js';
 import { ensureStateDirs, resolveStateDir } from './store/paths.js';
 import { registerPeerSendTool, registerPeerStatusTool, registerPeerRequestTool } from './tools.js';
 import type { PeerRecord, PeerTodo, PendingReply } from './types.js';
@@ -52,10 +52,21 @@ interface NodeState {
   startedAt: number;
   socketAddress: string;
   name: string;
+  /** Name before any collision suffix. */
+  base: string;
+  /** Usable herdr tab label, published as an alias. */
+  label: string | undefined;
+  /** Names this peer published and gave up → when they stop answering. */
+  previousNames: Map<string, number>;
+  /** The name in the last presence record written; only published names become aliases. */
+  publishedName: string | undefined;
+  /** Root session id: this peer's identity. Never a subagent's. */
   sessionId: string;
+  lookups: EnvLookups;
   peers: PeerRecord[];
+  /** Wake timestamps per sender key ({@link peerKey}). */
   wakes: Map<string, number[]>;
-  /** Peer whose message was last really delivered to this agent (undefined = fresh chain). */
+  /** Sender key of the last message really delivered to this agent (undefined = fresh chain). */
   lastInboundPeer: string | undefined;
   /** Hop that last real delivery carried; 0 when there has been none. */
   lastInboundHop: number;
@@ -89,7 +100,7 @@ function currentOf(): { pi: ExtensionHostLike; ctx: CommandContextLike } | undef
 }
 
 /** Stash a held batch (bounded) and ensure the retry poller runs. */
-function holdBatch(st: NodeState, msg: { from: string; body: string; replyTo?: string; hop: number }): void {
+function holdBatch(st: NodeState, msg: InboundMessage): void {
   st.held.push({ message: { ...msg }, receivedAt: Date.now() });
   while (st.held.length > MAX_HELD_BATCHES) {
     // Overflow drops the oldest batch — the sender got a 'held' receipt
@@ -127,7 +138,7 @@ async function pumpHeld(st: NodeState): Promise<void> {
     // Only a real delivery advances the relay chain — 'held'/'dropped'/'aside'
     // never reached the agent, so they must not consume a hop.
     if (res.outcome === 'woken' || res.outcome === 'injected') {
-      st.lastInboundPeer = batch.message.from;
+      st.lastInboundPeer = peerKey(batch.message.fromId, batch.message.from);
       st.lastInboundHop = batch.message.hop;
     }
     if (res.outcome !== 'held') st.held = st.held.filter((b) => b !== batch);
@@ -154,71 +165,89 @@ function logOf(st: NodeState, text: string): void {
   }
 }
 
-async function tick(st: NodeState): Promise<void> {
+/** Read one host fact; a throw is logged and becomes `fallback`. */
+function hostRead<T>(st: NodeState, what: string, read: () => T, fallback: T): T {
+  try {
+    return read();
+  } catch (err) {
+    logOf(st, `peers: reading ${what} failed: ${err instanceof Error ? err.message : String(err)}`);
+    return fallback;
+  }
+}
+
+/** How long a name this peer gave up keeps answering, as an alias. */
+const PREVIOUS_NAME_MS = 10 * 60_000;
+
+/**
+ * This peer's name from its base and the live roster, recording the name it
+ * replaces so senders mid-conversation still reach it for a while.
+ */
+function assignName(st: NodeState, base: string, others: PeerRecord[]): void {
+  const next = resolvePeerName({ base, sessionId: st.sessionId, pid: st.pid, peers: others });
+  // Only a name other peers could have learned is worth keeping: one held
+  // briefly before the first beat was never seen.
+  if (st.publishedName !== undefined && st.publishedName.toLowerCase() !== next.toLowerCase()) {
+    st.previousNames.set(st.publishedName, Date.now() + PREVIOUS_NAME_MS);
+  }
+  st.previousNames.delete(next);
+  st.base = base;
+  st.name = next;
+}
+
+/** Tab label (when a usable name) plus names held in the last minutes. */
+function currentAliases(st: NodeState): string[] {
+  const now = Date.now();
+  for (const [old, until] of st.previousNames) if (until <= now) st.previousNames.delete(old);
+  const aliases = [...st.previousNames.keys()];
+  if (st.label !== undefined && st.label.toLowerCase() !== st.name.toLowerCase()) aliases.unshift(st.label);
+  return aliases;
+}
+
+/** The base name for the current host session and working directory. */
+function currentBase(st: NodeState, cwd: string): string {
   const ctx = st.current?.ctx;
-  const cwd = typeof ctx?.cwd === 'string' && ctx.cwd !== '' ? ctx.cwd : process.cwd();
-  let sessionId = '';
-  try {
-    sessionId = ctx?.sessionManager?.getSessionId?.() ?? '';
-  } catch {
-    sessionId = '';
-  }
-  let model = '';
-  try {
-    model = ctx?.model?.id ?? '';
-  } catch {
-    model = '';
-  }
-  let busy = false;
-  try {
-    busy = !(ctx?.isIdle?.() ?? true);
-  } catch {
-    busy = false;
-  }
-  let sessionName: string | undefined;
-  try {
-    sessionName = st.current?.pi.getSessionName?.();
-  } catch {
-    sessionName = undefined;
-  }
-  if (sessionName === undefined) {
-    try {
-      sessionName = ctx?.sessionManager?.getSessionName?.();
-    } catch {
-      sessionName = undefined;
-    }
-  }
-  // The host marks model-generated titles `"auto"`: those are never peer
-  // addresses (no user intent, rewritten on replan) — peerNameFromSession
-  // falls back to the default silently instead of warning.
-  const derived = peerNameFromSession(sessionName, cwd, st.pid, {
+  const sessionName = hostRead(
+    st,
+    'session name',
+    () => st.current?.pi.getSessionName?.() ?? ctx?.sessionManager?.getSessionName?.(),
+    undefined
+  );
+  const chosen = chooseBase({
+    sessionName,
     titleSource: readTitleSource(ctx?.sessionManager),
+    dirBase: directoryBase(cwd, st.lookups.gitTopLevel(cwd)),
   });
-  if (derived.rejected !== undefined && derived.rejected !== st.lastRejectedSessionName) {
+  if (chosen.rejected !== undefined && chosen.rejected !== st.lastRejectedSessionName) {
     const first = st.lastRejectedSessionName === undefined;
-    st.lastRejectedSessionName = derived.rejected;
+    st.lastRejectedSessionName = chosen.rejected;
     const text =
-      `session name "${derived.rejected}" can't be a peer name (1-24 of a-z A-Z 0-9 _ . -); ` +
-      `using ${derived.name} — /rename the session to a valid name`;
+      `session name "${chosen.rejected}" can't be a peer name (1-24 of a-z A-Z 0-9 _ . -, not all digits, not main/all/self); ` +
+      `using ${chosen.base} — /rename the session to a valid name`;
     if (first) warnOf(st, text);
     else logOf(st, `peers: ${text}`);
   }
-  const base = derived.name;
+  return chosen.base;
+}
+
+async function tick(st: NodeState): Promise<void> {
+  const ctx = st.current?.ctx;
+  const cwd = typeof ctx?.cwd === 'string' && ctx.cwd !== '' ? ctx.cwd : process.cwd();
+  st.sessionId = hostRead(st, 'session id', () => ctx?.sessionManager?.getSessionId?.() ?? '', '');
+  const model = hostRead(st, 'model', () => ctx?.model?.id ?? '', '');
+  const busy = hostRead(st, 'idle state', () => !(ctx?.isIdle?.() ?? true), false);
+  const rawLabel = st.lookups.tabLabel();
+  st.label = rawLabel !== undefined && isValidPeerName(rawLabel) ? rawLabel : undefined;
+  const base = currentBase(st, cwd);
   let others: PeerRecord[] | undefined;
   try {
     others = (await listLivePeers(st.stateDir, st.pid)).filter((p) => p.pid !== st.pid);
-  } catch {
+  } catch (err) {
     // Transient listing failure: fall back to the last-good roster below.
+    logOf(st, `peers: listing peers failed: ${err instanceof Error ? err.message : String(err)}`);
     others = undefined;
   }
-  st.name = resolvePeerName({
-    candidate: base,
-    pid: st.pid,
-    startedAt: st.startedAt,
-    peers: others ?? st.peers.filter((p) => p.pid !== st.pid),
-  });
-  st.sessionId = sessionId;
-  st.nativeTodos = readNativeTodos(st.current?.ctx.sessionManager);
+  assignName(st, base, others ?? st.peers.filter((p) => p.pid !== st.pid));
+  st.nativeTodos = readNativeTodos(ctx?.sessionManager);
   const lastActivity = st.nativeActivity;
   const activity =
     lastActivity !== undefined && Date.now() - lastActivity.at <= ACTIVITY_FRESH_MS
@@ -232,9 +261,12 @@ async function tick(st: NodeState): Promise<void> {
       stateDir: st.stateDir,
       pid: st.pid,
       name: st.name,
+      base: st.base,
+      ...(st.label !== undefined ? { label: st.label } : {}),
+      aliases: currentAliases(st),
       cwd,
       harness: HARNESS,
-      ...(sessionId !== '' ? { sessionId } : {}),
+      ...(st.sessionId !== '' ? { sessionId: st.sessionId } : {}),
       ...(model !== '' ? { model } : {}),
       socket: st.socketAddress,
       startedAt: st.startedAt,
@@ -242,6 +274,7 @@ async function tick(st: NodeState): Promise<void> {
       ...(activity !== undefined && activity !== '' ? { activity } : {}),
       ...(st.nativeTodos.length > 0 ? { todos: st.nativeTodos } : {}),
     });
+    st.publishedName = own.name;
   } catch (err) {
     logOf(st, `peers: heartbeat failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -269,8 +302,19 @@ function armBeatTimer(st: NodeState, ctx: CommandContextLike): void {
   }).stop;
 }
 
-/** Get the live node, starting one if this process has none. Re-arms on every event. */
+/**
+ * True for events from a subagent session. The extension is loaded into
+ * every session in the process; only the root session is the peer, so a
+ * subagent's context must never become `current` — its session id, cwd and
+ * name would be published as this peer's identity.
+ */
+function isSubagent(ctx: CommandContextLike): boolean {
+  return ctx.agent?.kind === 'sub';
+}
+
+/** Get the live node, starting one if this process has none. Re-arms on every root-session event. */
 function ensureNode(pi: ExtensionHostLike, ctx: CommandContextLike): NodeState | undefined {
+  if (isSubagent(ctx)) return undefined;
   const existing = liveNode();
   if (existing !== undefined) {
     existing.current = { pi, ctx };
@@ -291,7 +335,12 @@ function ensureNode(pi: ExtensionHostLike, ctx: CommandContextLike): NodeState |
       startedAt: Date.now(),
       socketAddress: peerSocketAddress(stateDir, process.pid),
       name: '',
+      base: '',
+      label: undefined,
+      previousNames: new Map<string, number>(),
+      publishedName: undefined,
       sessionId: '',
+      lookups: createEnvLookups({ onError: (text) => logOf(st, text) }),
       peers: [],
       wakes: new Map<string, number[]>(),
       lastInboundPeer: undefined,
@@ -307,12 +356,11 @@ function ensureNode(pi: ExtensionHostLike, ctx: CommandContextLike): NodeState |
       nativeActivity: undefined,
       pendingReplies: new Map<string, PendingReply>(),
     };
-    st.name = defaultPeerName(
-      typeof ctx.cwd === 'string' && ctx.cwd !== '' ? ctx.cwd : process.cwd(),
-      st.pid
-    );
+    const cwd = typeof ctx.cwd === 'string' && ctx.cwd !== '' ? ctx.cwd : process.cwd();
+    st.sessionId = hostRead(st, 'session id', () => ctx.sessionManager?.getSessionId?.() ?? '', '');
+    assignName(st, directoryBase(cwd), []);
     node = st;
-    void ensureStateDirs(stateDir)
+    void Promise.all([ensureStateDirs(stateDir), st.lookups.prime(cwd)])
       .then(() => {
         if (st.stopped) return;
         st.server = startPeerServer({
@@ -330,7 +378,7 @@ function ensureNode(pi: ExtensionHostLike, ctx: CommandContextLike): NodeState |
               live.pendingReplies.delete(msg.replyTo);
               clearTimeout(entry.timer);
               entry.resolve(msg.body);
-              live.lastInboundPeer = msg.from;
+              live.lastInboundPeer = peerKey(msg.fromId, msg.from);
               live.lastInboundHop = msg.hop;
               return 'replied';
             }
@@ -349,7 +397,7 @@ function ensureNode(pi: ExtensionHostLike, ctx: CommandContextLike): NodeState |
             // Only a real delivery advances the relay chain — 'held'/'dropped'/
             // 'aside' never reached the agent, so they must not consume a hop.
             if ((res.outcome === 'woken' || res.outcome === 'injected') && live !== undefined) {
-              live.lastInboundPeer = msg.from;
+              live.lastInboundPeer = peerKey(msg.fromId, msg.from);
               live.lastInboundHop = msg.hop;
             }
             if (res.outcome === 'held' && live !== undefined) holdBatch(live, msg);
@@ -459,7 +507,7 @@ export default function peersExtension(pi: ExtensionHostLike): void {
       const st = liveNode();
       return sendToPeer(to, message, {
         ownName: st?.name ?? '',
-        ...(st !== undefined ? { state: st } : {}),
+        ...(st !== undefined ? { state: st, ownId: st.sessionId } : {}),
         isReply: replyTo !== undefined,
         listPeers: freshPeers,
         ...(replyTo !== undefined ? { replyTo } : {}),
@@ -477,17 +525,19 @@ export default function peersExtension(pi: ExtensionHostLike): void {
 
   registerPeerRequestTool(pi, {
     ownName: () => liveNode()?.name ?? '',
-    getHop: (to) => {
-      const st = liveNode();
-      return st === undefined ? 0 : outboundHop(st, to, false);
-    },
     listPeers: freshPeers,
     send: (to, message, outDeps) => {
       const st = liveNode();
       return sendToPeer(to, message, {
         ...outDeps,
         ...(st !== undefined
-          ? { reap: (record) => { void removePeerRecord(st.stateDir, record.pid); } }
+          ? {
+              state: st,
+              ownId: st.sessionId,
+              reap: (record) => {
+                void removePeerRecord(st.stateDir, record.pid);
+              },
+            }
           : {}),
       });
     },
@@ -581,22 +631,7 @@ export default function peersExtension(pi: ExtensionHostLike): void {
     // building the note — the async re-beat may not have landed yet, and
     // the first prompt after /rename must not show a stale name.
     const cwd = typeof ctx?.cwd === 'string' && ctx.cwd !== '' ? ctx.cwd : process.cwd();
-    let sessionName: string | undefined;
-    try {
-      sessionName = pi.getSessionName?.() ?? ctx?.sessionManager?.getSessionName?.();
-    } catch {
-      sessionName = undefined;
-    }
-    // Auto-titles never claim the peer name, even valid-looking ones: the
-    // host rewrites them, which would flap the address mid-life.
-    if (sessionName !== undefined && isValidPeerName(sessionName) && readTitleSource(ctx?.sessionManager) !== 'auto') {
-      st.name = resolvePeerName({
-        candidate: sessionName,
-        pid: st.pid,
-        startedAt: st.startedAt,
-        peers: st.peers.filter((p) => p.pid !== st.pid),
-      });
-    }
+    assignName(st, currentBase(st, cwd), st.peers.filter((p) => p.pid !== st.pid));
     // Always inject: the agent learns its OWN peer name here, even solo.
     const others = st.peers.filter((p) => p.pid !== st.pid);
     const note = buildPeersNote(st.name, others);

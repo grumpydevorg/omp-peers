@@ -26,8 +26,9 @@ export function checkFrame(value) {
         return { ok: false, error: 'bad frame' };
     if (t === 'ping')
         return { ok: true, frame: { t: 'ping', from } };
-    const { body, replyTo, hop, ack } = value;
+    const { fromId, body, replyTo, hop, ack } = value;
     if (from === '' ||
+        (fromId !== undefined && typeof fromId !== 'string') ||
         typeof body !== 'string' ||
         (replyTo !== undefined && typeof replyTo !== 'string') ||
         (hop !== undefined && typeof hop !== 'number') ||
@@ -39,6 +40,7 @@ export function checkFrame(value) {
         frame: {
             t: 'msg',
             from,
+            ...(fromId !== undefined ? { fromId } : {}),
             body,
             ...(replyTo !== undefined ? { replyTo } : {}),
             ...(hop !== undefined ? { hop } : {}),

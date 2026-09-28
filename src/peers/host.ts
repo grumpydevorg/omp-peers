@@ -49,10 +49,10 @@ export interface CommandContextLike {
   sessionManager: SessionManagerLike;
   model?: { id?: string };
   isIdle: () => boolean;
+  /** Which agent this session runs; `sub` for subagents (omp). */
+  agent?: { kind?: string };
   setInterval?: (callback: () => void, ms?: number) => unknown;
   clearTimer?: (timer: unknown) => void;
-  /** The session's agent identity (omp `ExtensionContext.agent`): `main` for the root, `sub` for a task subagent. */
-  agent?: { kind?: string };
   [key: string]: unknown;
 }
 

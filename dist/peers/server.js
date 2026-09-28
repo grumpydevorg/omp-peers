@@ -50,19 +50,23 @@ function reply(socket, payload) {
  */
 export function startPeerServer(opts) {
     const coalesceMs = opts.coalesceMs ?? COALESCE_MS;
+    // Keyed by the sender's id (name for older senders), so a burst stays one
+    // batch even if the sender's name changes mid-burst.
     const pending = new Map();
     const sockets = new Set();
     let stopped = false;
     let server;
-    async function deliverBatch(from, first) {
+    async function deliverBatch(key, first) {
         if (stopped)
             return;
         await new Promise((resolve) => {
             const wait = setTimeout(resolve, coalesceMs);
             wait.unref?.();
         });
-        const batch = pending.get(from) ?? { bodies: [], hop: 0, first };
-        pending.delete(from);
+        const batch = pending.get(key);
+        pending.delete(key);
+        if (batch === undefined)
+            return;
         const bodies = batch.bodies.length > 0 ? batch.bodies : [''];
         const body = bodies.length === 1
             ? bodies[0]
@@ -71,7 +75,8 @@ export function startPeerServer(opts) {
                 .join('\n\n')}`;
         try {
             const outcome = await opts.onMessage({
-                from,
+                from: batch.from,
+                ...(batch.fromId !== undefined ? { fromId: batch.fromId } : {}),
                 body,
                 ...(batch.replyTo !== undefined ? { replyTo: batch.replyTo } : {}),
                 hop: batch.hop,
@@ -79,7 +84,7 @@ export function startPeerServer(opts) {
             reply(first, { ok: true, outcome });
         }
         catch (err) {
-            // `from` was already deleted above — deleting again could eat a NEWER
+            // `key` was already deleted above — deleting again could eat a NEWER
             // pending entry that arrived while onMessage was failing.
             reply(first, { ok: false, error: err instanceof Error ? err.message : String(err) });
         }
@@ -135,6 +140,7 @@ export function startPeerServer(opts) {
             try {
                 const outcome = await opts.onMessage({
                     from: frame.from,
+                    ...(frame.fromId !== undefined ? { fromId: frame.fromId } : {}),
                     body: frame.body,
                     hop,
                     ack: true,
@@ -146,20 +152,23 @@ export function startPeerServer(opts) {
             }
             return;
         }
-        const known = pending.get(frame.from);
+        const key = frame.fromId !== undefined && frame.fromId !== '' ? frame.fromId : frame.from;
+        const known = pending.get(key);
         if (known) {
             known.bodies.push(frame.body);
             known.hop = Math.max(known.hop, hop);
             reply(socket, { ok: true, outcome: 'coalesced' });
             return;
         }
-        pending.set(frame.from, {
+        pending.set(key, {
+            from: frame.from,
+            ...(frame.fromId !== undefined ? { fromId: frame.fromId } : {}),
             bodies: [frame.body],
             ...(frame.replyTo !== undefined && frame.replyTo !== '' ? { replyTo: frame.replyTo } : {}),
             hop,
             first: socket,
         });
-        contain(deliverBatch(frame.from, socket), 'batch delivery');
+        contain(deliverBatch(key, socket), 'batch delivery');
     }
     function accept(socket) {
         sockets.add(socket);

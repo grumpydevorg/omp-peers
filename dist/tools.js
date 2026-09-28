@@ -10,6 +10,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { formatBeatAge } from './peers/presence.js';
+import { lookupPeer } from './peers/ids.js';
 export function registerPeerSendTool(pi, deps) {
     pi.registerTool({
         name: 'peer_send',
@@ -106,11 +107,10 @@ export function registerPeerStatusTool(pi, deps) {
                 const to = typeof params['to'] === 'string' ? params['to'] : '';
                 if (to === '')
                     return { content: [{ type: 'text', text: 'Peer name (`to`) is required.' }] };
-                const peers = await deps.listPeers();
-                const peer = peers.find((p) => p.name === to);
-                if (peer === undefined) {
-                    return { content: [{ type: 'text', text: `No live peer named "${to}". Use /peers to see who is live.` }] };
-                }
+                const found = lookupPeer(to, await deps.listPeers());
+                if (!found.found)
+                    return { content: [{ type: 'text', text: found.reason }] };
+                const peer = found.record;
                 const now = deps.now?.() ?? Date.now();
                 const lines = [
                     `\`${peer.name}\` is ${peer.busy ? 'working' : 'idle'} in ${peer.cwd} · beat ${formatBeatAge(peer.beatAt, now)}.`,
@@ -132,10 +132,10 @@ export function registerPeerStatusTool(pi, deps) {
 }
 async function statusHintFor(to, listPeers, now) {
     try {
-        const peers = await listPeers();
-        const peer = peers.find((p) => p.name === to);
-        if (peer === undefined)
-            return `No live peer named "${to}". Use /peers to see who is live.`;
+        const found = lookupPeer(to, await listPeers());
+        if (!found.found)
+            return found.reason;
+        const peer = found.record;
         return `\`${peer.name}\` is ${peer.busy ? 'working' : 'idle'} · ${peer.activity ?? 'no activity'} · ${peer.todos?.length ?? 0} todos · beat ${formatBeatAge(peer.beatAt, now)}.`;
     }
     catch {
@@ -189,7 +189,6 @@ export function registerPeerRequestTool(pi, deps) {
             try {
                 const receipt = await deps.send(to, message, {
                     ownName: deps.ownName(),
-                    hop: deps.getHop(to),
                     isReply: false,
                     listPeers: deps.listPeers,
                     replyTo,

@@ -15,8 +15,8 @@
  * rendering; burst coalescing is per sender —
  * concurrent senders stay separate batches and a coalesced hop takes
  * Math.max; UTF-8 frames split mid-character still decode intact;
- * session-name adoption (`peerNameFromSession`, incl. the refused `Main`)
- * + first-wins collision; defaultPeerName never truncates the pid suffix;
+ * base-name choice (`/rename` name, then checkout, then directory) and
+ * session-id collision suffixes; subagent sessions never change the identity;
  * stale reap; forward-compat v>1 records skipped-not-unlinked; a live pid's
  * socket file survives record reaping (unix only).
  * Plain Node ESM — no test-runner dependency (also runs under `node --test`).
@@ -31,12 +31,18 @@ import assert from 'node:assert/strict';
 
 process.env.OMP_PEERS_DIR = await mkdtemp(join(tmpdir(), 'peers-test-'));
 const STATE = process.env.OMP_PEERS_DIR;
+// Tests must not read the real terminal's herdr tab.
+delete process.env.HERDR_ENV;
+delete process.env.HERDR_PANE_ID;
 
 const {
   writePeerBeat,
   listLivePeers,
   removePeerRecord,
-  peerNameFromSession,
+  chooseBase,
+  directoryBase,
+  lookupPeer,
+  createEnvLookups,
   readTitleSource,
   buildPeersNote,
   appendNoteToMessages,
@@ -48,8 +54,8 @@ const {
   outboundHop,
   MAX_HOPS,
   validatePeerName,
+  isValidPeerName,
   resolvePeerName,
-  defaultPeerName,
   peerSocketAddress,
   startPeerServer,
   requestPeer,
@@ -648,6 +654,16 @@ describe('inbound delivery against a fake host', () => {
     assert.equal(cur.noted.length, 1);
   });
 
+  it('keys the wake budget by sender id, so a rename does not reset it', async () => {
+    const wakes = new Map();
+    const cur = fakeCtx('sess-beta');
+    const deps = { getCurrent: () => ({ pi: cur.pi, ctx: cur.ctx }), wakes };
+    await deliverInboundPeerMessage({ from: 'old-name', fromId: 'sid-alpha', body: 'one' }, deps);
+    await deliverInboundPeerMessage({ from: 'new-name', fromId: 'sid-alpha', body: 'two' }, deps);
+    assert.deepEqual([...wakes.keys()], ['sid-alpha']);
+    assert.equal(wakes.get('sid-alpha').length, 2);
+  });
+
   it('records idle deliveries against the hourly wake budget', async () => {
     const wakes = new Map();
     const cur = fakeCtx('sess-beta');
@@ -705,73 +721,91 @@ describe('inbound delivery against a fake host', () => {
   });
 });
 
-describe('peer identity: validation, collision, session-name adoption', () => {
+describe('peer identity: validation, base name, collision, lookup', () => {
+  const rec = (over) => ({
+    v: 1, pid: 1, name: 'x', cwd: '/', project: 'x', harness: 'omp', sessionId: '',
+    model: '', socket: '', startedAt: 1, beatAt: 1, busy: false, ...over,
+  });
+
   it('accepts valid names and rejects the rest', () => {
     validatePeerName('backend');
     validatePeerName('a.b-c_d9');
     assert.throws(() => validatePeerName(''), /invalid peer name/);
     assert.throws(() => validatePeerName('has space'), /invalid peer name/);
-    assert.throws(() => validatePeerName('Main'), /driving agent/);
     assert.throws(() => validatePeerName('x'.repeat(25)), /invalid peer name/);
-    assert.throws(() => validatePeerName('agent-1', { localIds: ['agent-1'] }), /live local subagent/);
-    // Case-sensitive: only the exact host name is refused.
-    validatePeerName('main');
+    // Reserved in any case, and all-digit names read as a pid or tab number.
+    for (const name of ['Main', 'main', 'MAIN', 'all', 'Self']) {
+      assert.throws(() => validatePeerName(name), /reserved/, name);
+    }
+    assert.throws(() => validatePeerName('10'), /all digits/);
+    assert.equal(isValidPeerName('10'), false);
+    assert.equal(isValidPeerName('st039'), true);
   });
 
-  it('resolves cross-process collisions first-wins by startedAt', () => {
-    const older = { v: 1, pid: 100, name: 'backend', cwd: '/', project: 'x', harness: 'omp', sessionId: '', model: '', socket: '', startedAt: 1000, beatAt: 1000, busy: false };
-    assert.equal(
-      resolvePeerName({ candidate: 'backend', pid: 200, startedAt: 2000, peers: [older] }),
-      'backend-200'
-    );
-    assert.equal(
-      resolvePeerName({ candidate: 'backend', pid: 100, startedAt: 1000, peers: [{ ...older, pid: 200, startedAt: 2000, name: 'backend' }] }),
-      'backend'
-    );
-    assert.equal(resolvePeerName({ candidate: 'solo', pid: 300, startedAt: 3000, peers: [older] }), 'solo');
+  it('derives the directory base from the checkout, stepping past branch and version dirs', () => {
+    assert.equal(directoryBase('/Git/supersensory/active/rick--edge-platform'), 'rick--edge-platform');
+    // The git top level wins over a subdirectory cwd.
+    assert.equal(directoryBase('/Git/re/comsol/src/deep', '/Git/re/comsol'), 'comsol');
+    for (const branchDir of ['main', 'master', 'develop', 'trunk', '0.8.35']) {
+      assert.equal(directoryBase(`/Git/lab/acoustic-fem/${branchDir}`), 'acoustic-fem', branchDir);
+    }
+    assert.equal(directoryBase('/work/my proj'), 'my-proj');
+    assert.equal(directoryBase(`/${'x'.repeat(40)}`).length, 24);
+    // A directory that sanitises to nothing or to a reserved name still gets an address.
+    assert.equal(directoryBase('/tmp/@@@'), 'peer');
+    assert.equal(directoryBase('/srv/all'), 'peer');
   });
 
-  it('defaults to a valid basename-pid address', () => {
-    assert.match(defaultPeerName('/work/my proj', 123), /^[A-Za-z0-9_.-]{1,24}$/);
-  });
-
-  it('never truncates the pid suffix in the default name', () => {
-    const name = defaultPeerName(`/${'x'.repeat(40)}`, 12345678);
-    assert.ok(name.length <= 24);
-    assert.ok(name.endsWith('-12345678'));
-  });
-
-  it('adopts a raw valid session name and falls back otherwise', () => {
-    assert.deepEqual(peerNameFromSession('backend', '/work/proj', 5), { name: 'backend' });
-    const rejected = peerNameFromSession('My Agent', '/work/proj', 5);
-    assert.equal(rejected.rejected, 'My Agent');
-    assert.equal(rejected.name, defaultPeerName('/work/proj', 5));
-    assert.deepEqual(peerNameFromSession('', '/work/proj', 5), {
-      name: defaultPeerName('/work/proj', 5),
+  it('prefers an explicit /rename name, never an auto title', () => {
+    assert.deepEqual(chooseBase({ sessionName: 'backend', titleSource: 'user', dirBase: 'proj' }), { base: 'backend' });
+    assert.deepEqual(chooseBase({ sessionName: 'backend', titleSource: 'auto', dirBase: 'proj' }), { base: 'proj' });
+    assert.deepEqual(chooseBase({ sessionName: undefined, titleSource: undefined, dirBase: 'proj' }), { base: 'proj' });
+    assert.deepEqual(chooseBase({ sessionName: 'My Agent', titleSource: 'user', dirBase: 'proj' }), {
+      base: 'proj',
+      rejected: 'My Agent',
     });
-    assert.deepEqual(peerNameFromSession(undefined, '/work/proj', 5), {
-      name: defaultPeerName('/work/proj', 5),
-    });
+    assert.equal(chooseBase({ sessionName: 'Main', titleSource: 'user', dirBase: 'proj' }).rejected, 'Main');
   });
 
-  it('ignores model-generated auto-titles silently', () => {
-    assert.deepEqual(
-      peerNameFromSession('Can you contact peers independently', '/work/proj', 5, { titleSource: 'auto' }),
-      { name: defaultPeerName('/work/proj', 5) }
-    );
-    // Even a valid-looking auto-title never claims the address.
-    assert.deepEqual(peerNameFromSession('backend', '/work/proj', 5, { titleSource: 'auto' }), {
-      name: defaultPeerName('/work/proj', 5),
-    });
-    // Explicit user names keep legacy adopt-or-warn behavior.
-    assert.deepEqual(peerNameFromSession('backend', '/work/proj', 5, { titleSource: 'user' }), { name: 'backend' });
-    assert.equal(peerNameFromSession('My Agent', '/work/proj', 5, { titleSource: 'user' }).rejected, 'My Agent');
+  it('suffixes every sharer of a base with its own session tail, stable across restart', () => {
+    const idA = '01a0e6f9-ee15-75b1-9cd1-1cf7d75e777d';
+    const idB = '01a0e71a-b27a-73b1-9f0b-09c32e1ec580';
+    const a = rec({ pid: 100, name: 'supersensory', base: 'supersensory', sessionId: idA });
+    // B joins with the same base: both are suffixed, neither keeps the bare name.
+    assert.equal(resolvePeerName({ base: 'supersensory', sessionId: idB, pid: 200, peers: [a] }), 'supersensory-c580');
+    const b = rec({ pid: 200, name: 'supersensory-c580', base: 'supersensory', sessionId: idB });
+    assert.equal(resolvePeerName({ base: 'supersensory', sessionId: idA, pid: 100, peers: [b] }), 'supersensory-777d');
+    // A restarts (--resume: new pid, same session id) and gets the same name.
+    assert.equal(resolvePeerName({ base: 'supersensory', sessionId: idA, pid: 300, peers: [b] }), 'supersensory-777d');
+    // Case-insensitive bases collide; a lone peer keeps the bare base.
+    assert.equal(resolvePeerName({ base: 'Supersensory', sessionId: idA, pid: 100, peers: [b] }), 'Supersensory-777d');
+    assert.equal(resolvePeerName({ base: 'solo', sessionId: idA, pid: 100, peers: [b] }), 'solo');
+    // An older record without `base` collides through its name.
+    const legacy = rec({ pid: 400, name: 'solo', sessionId: idB });
+    assert.equal(resolvePeerName({ base: 'solo', sessionId: idA, pid: 100, peers: [legacy] }), 'solo-777d');
+    // A 4-hex tie widens to 6; no session id falls back to the pid.
+    const tie = rec({ pid: 500, name: 'dup', base: 'dup', sessionId: 'aaaaaaaa-0000-0000-0000-00000012777d' });
+    assert.equal(resolvePeerName({ base: 'dup', sessionId: idA, pid: 100, peers: [tie] }), 'dup-5e777d');
+    assert.equal(resolvePeerName({ base: 'dup', sessionId: '', pid: 100, peers: [tie] }), 'dup-100');
   });
 
-  it('refuses the host name Main as a peer address', () => {
-    const res = peerNameFromSession('Main', '/work/proj', 5);
-    assert.equal(res.name, defaultPeerName('/work/proj', 5));
-    assert.equal(res.rejected, 'Main');
+  it('looks peers up by name, unique alias or session id, case-insensitively', () => {
+    const peers = [
+      rec({ pid: 1, name: 'rick--lake-register', label: 'Starlinks', aliases: ['Starlinks'], sessionId: '01a0e7aa-1111-7000-8000-000000000001' }),
+      rec({ pid: 2, name: 'rick--starling-edr', label: 'starlings', aliases: ['starlings', 'old-name'], sessionId: '01a0e7bb-2222-7000-8000-000000000002' }),
+      rec({ pid: 3, name: 'rollout-a', aliases: ['rollout'] }),
+      rec({ pid: 4, name: 'rollout-b', aliases: ['rollout'] }),
+    ];
+    assert.equal(lookupPeer('RICK--LAKE-REGISTER', peers).record?.pid, 1);
+    assert.equal(lookupPeer('starlinks', peers).record?.pid, 1);
+    assert.equal(lookupPeer('Starlings', peers).record?.pid, 2);
+    assert.equal(lookupPeer('old-name', peers).record?.pid, 2);
+    assert.equal(lookupPeer('01a0e7bb-2222', peers).record?.pid, 2);
+    const ambiguous = lookupPeer('rollout', peers);
+    assert.equal(ambiguous.found, false);
+    assert.match(ambiguous.reason, /ambiguous: it names rollout-a, rollout-b/);
+    // A short id prefix never matches: every id shares the timestamp head.
+    assert.match(lookupPeer('01a0e7', peers).reason, /Unknown peer "01a0e7"/);
   });
 
   it('reads the title source from the header or the manager', () => {
@@ -779,6 +813,44 @@ describe('peer identity: validation, collision, session-name adoption', () => {
     assert.equal(readTitleSource({}), undefined);
     assert.equal(readTitleSource({ getHeader: () => ({ title: 'x', titleSource: 'auto' }) }), 'auto');
     assert.equal(readTitleSource({ titleSource: 'user' }), 'user');
+  });
+});
+
+describe('environment lookups never block and stay cached', () => {
+  it('reads the herdr tab label through the pane, and caches the git top level', async () => {
+    const calls = [];
+    const run = async (file, args) => {
+      calls.push([file, ...args].join(' '));
+      if (file === 'git') return '/Git/re/comsol\n';
+      if (args[0] === 'pane') return JSON.stringify({ result: { pane: { tab_id: 'wP:tY' } } });
+      return JSON.stringify({ result: { tab: { label: 'omp-peers' } } });
+    };
+    const lookups = createEnvLookups({ env: { HERDR_ENV: '1', HERDR_PANE_ID: 'wP:p13' }, run });
+    // First reads return at once with nothing cached.
+    assert.equal(lookups.gitTopLevel('/Git/re/comsol/src'), undefined);
+    assert.equal(lookups.tabLabel(), undefined);
+    await lookups.prime('/Git/re/comsol/src');
+    assert.equal(lookups.gitTopLevel('/Git/re/comsol/src'), '/Git/re/comsol');
+    assert.equal(lookups.tabLabel(), 'omp-peers');
+    assert.deepEqual(calls, [
+      'git -C /Git/re/comsol/src rev-parse --show-toplevel',
+      'herdr pane get wP:p13',
+      'herdr tab get wP:tY',
+    ]);
+  });
+
+  it('treats a failed lookup as absent: outside git, outside herdr, or a hung herdr', async () => {
+    const errors = [];
+    const lookups = createEnvLookups({
+      env: { HERDR_ENV: '1', HERDR_PANE_ID: 'wP:p1' },
+      run: async () => { throw new Error('timed out'); },
+      onError: (text) => errors.push(text),
+    });
+    await lookups.prime('/tmp/nowhere');
+    assert.equal(lookups.gitTopLevel('/tmp/nowhere'), undefined);
+    assert.equal(lookups.tabLabel(), undefined);
+    assert.match(errors[0], /herdr tab label lookup failed: timed out/);
+    assert.equal(createEnvLookups({ env: {} }).tabLabel(), undefined);
   });
 });
 
@@ -823,7 +895,7 @@ describe('peer name follows the host session name (tick level)', () => {
     sessionName = 'Fix the login bug later';
     sessionId = 'sess-tick-2';
     handlers['session_switch'](undefined, fakeCtx);
-    const fallback = defaultPeerName(join(STATE, 'tickproj'), process.pid);
+    const fallback = 'tickproj';
     const rejectedBeat = await waitForOwnBeat(fallback);
     assert.equal(rejectedBeat.name, fallback);
     assert.equal(noted.length, 1);
@@ -842,6 +914,23 @@ describe('peer name follows the host session name (tick level)', () => {
     }
     assert.ok(logged.some((m) => m.includes('Add deepseek-harness retro checks')), 'second rejection logs instead of popping up');
     assert.equal(noted.length, 1, 'no second popup for a new auto-title; later ones log only');
+
+    // A subagent's events reach the same extension instance. They must not
+    // become the published identity: session id, cwd and name stay the root's.
+    const subCtx = {
+      cwd: join(STATE, 'elsewhere'),
+      agent: { kind: 'sub' },
+      ui: { notify: () => {} },
+      sessionManager: { getSessionId: () => 'sub-session' },
+    };
+    const subNote = handlers['context']({ messages: [{ role: 'user', content: 'x' }] }, subCtx);
+    assert.equal(subNote, undefined, 'no roster note in subagent prompts');
+    handlers['session_switch'](undefined, subCtx);
+    handlers['todo_reminder']();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const afterSub = await waitForOwnBeat(fallback);
+    assert.equal(afterSub.sessionId, 'sess-tick-4');
+    assert.equal(afterSub.cwd, join(STATE, 'tickproj'));
 
     handlers['session_shutdown']();
   });
@@ -954,6 +1043,28 @@ describe('conversation-aware hop accounting', () => {
     st.lastInboundPeer = undefined;
     st.lastInboundHop = 0;
     assert.equal(outboundHop(st, 'peer-c', false), 0);
+  });
+
+  it('keeps a conversation level when the peer renames mid-conversation', async () => {
+    // The last inbound came from session sid-convo, then named `convo`; it is
+    // now `convo-renamed`. Hop state is keyed by session id, so replying to
+    // the new name is still the same conversation, not a relay.
+    const addr = peerSocketAddress(STATE, 47667);
+    const srv = startPeerServer({ address: addr, ownName: () => 'convo-renamed', onMessage: async () => 'injected' });
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const record = {
+        v: 1, pid: 47667, name: 'convo-renamed', cwd: '/w/c', project: 'c', harness: 'omp',
+        sessionId: 'sid-convo', model: '', socket: addr, startedAt: 1, beatAt: Date.now(), busy: false,
+      };
+      const state = { lastInboundPeer: 'sid-convo', lastInboundHop: 4 };
+      const receipt = await sendToPeer('convo-renamed', 'still here?', {
+        ownName: 'alpha', ownId: 'sid-alpha', state, listPeers: async () => [record],
+      });
+      assert.match(receipt, /^Delivered to convo-renamed/);
+    } finally {
+      srv.stop();
+    }
   });
 
   it('derives hop 4, not 5, for a conversation after a hop-4 delivery', async () => {
@@ -1171,7 +1282,7 @@ describe('activity, todos, and request/reply tools', () => {
     const tools = {};
     registerPeerStatusTool({ registerTool: (def) => { tools[def.name] = def; } }, { listPeers: async () => [], now });
     const res = await tools['peer_status'].execute('id-2', { to: 'missing' });
-    assert.match(res.content[0].text, /No live peer named "missing"/);
+    assert.match(res.content[0].text, /Unknown peer "missing". Live peers: none/);
   });
 
   it('peer_request receives a matching reply', async () => {

@@ -31,6 +31,9 @@ export interface BeatInput {
   busy?: boolean;
   activity?: string;
   todos?: PeerTodo[];
+  base?: string;
+  label?: string;
+  aliases?: string[];
 }
 
 /** Field shape shared by every schema version (version gate lives in isPeerRecord). */
@@ -44,7 +47,11 @@ function hasPeerRecordShape(value: unknown): value is Record<string, unknown> {
     (r['harness'] === 'omp' || r['harness'] === 'pi') &&
     typeof r['socket'] === 'string' &&
     typeof r['startedAt'] === 'number' &&
-    typeof r['beatAt'] === 'number'
+    typeof r['beatAt'] === 'number' &&
+    (r['base'] === undefined || typeof r['base'] === 'string') &&
+    (r['label'] === undefined || typeof r['label'] === 'string') &&
+    (r['aliases'] === undefined ||
+      (Array.isArray(r['aliases']) && r['aliases'].every((alias) => typeof alias === 'string')))
   );
 }
 
@@ -84,6 +91,9 @@ export async function writePeerBeat(input: BeatInput): Promise<PeerRecord> {
   if (input.todos !== undefined && input.todos.length > 0) {
     record.todos = input.todos;
   }
+  if (input.base !== undefined) record.base = input.base;
+  if (input.label !== undefined && input.label !== '') record.label = input.label;
+  if (input.aliases !== undefined && input.aliases.length > 0) record.aliases = input.aliases;
   const file = peerPath(pid, input.stateDir);
   // chmod only on first write — the file keeps its mode across refreshes,
   // so re-chmodding every 15s beat is wasted syscalls.
