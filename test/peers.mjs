@@ -23,7 +23,7 @@
  */
 
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
-import { createConnection } from 'node:net';
+import { createConnection, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -289,6 +289,83 @@ describe('outbound frame → inbound path', () => {
     assert.equal(res?.ok, false);
     assert.match(res?.error ?? '', /too large/);
     assert.equal(deliveries, before);
+  });
+
+  // One raw line to the socket; resolves the reply line, or undefined on close.
+  const rawRequest = (address, text) =>
+    new Promise((resolve) => {
+      const socket = createConnection(address, () => socket.write(`${text}\n`));
+      socket.setEncoding('utf8');
+      let buffer = '';
+      socket.on('data', (chunk) => {
+        buffer += chunk;
+        const index = buffer.indexOf('\n');
+        if (index === -1) return;
+        socket.destroy();
+        resolve(JSON.parse(buffer.slice(0, index)));
+      });
+      socket.on('close', () => resolve(undefined));
+      socket.on('error', () => resolve(undefined));
+    });
+
+  it('refuses malformed frames and keeps serving', async () => {
+    const before = deliveries;
+    const cases = [
+      ['null', 'bad frame'],
+      ['42', 'bad frame'],
+      ['"text"', 'bad frame'],
+      ['[]', 'bad frame'],
+      ['{}', 'unknown frame'],
+      ['{"t":"nope","from":"x"}', 'unknown frame'],
+      ['{"t":"ping"}', 'bad frame'],
+      ['{"t":"msg"}', 'bad frame'],
+      ['{"t":"msg","from":1,"body":"x"}', 'bad frame'],
+      ['{"t":"msg","from":"","body":"x"}', 'bad frame'],
+      ['{"t":"msg","from":"x","body":null}', 'bad frame'],
+      ['{"t":"msg","from":"x","body":"y","hop":"2"}', 'bad frame'],
+      ['{"t":"msg","from":"x","body":"y","replyTo":7}', 'bad frame'],
+      ['{"t":"msg","from":"x","body":"y","ack":"yes"}', 'bad frame'],
+      ['not json', 'bad frame'],
+    ];
+    for (const [text, error] of cases) {
+      assert.deepEqual(await rawRequest(addrB, text), { ok: false, error }, text);
+    }
+    assert.equal(deliveries, before);
+    assert.deepEqual(await rawRequest(addrB, '{"t":"ping","from":"x"}'), { ok: true, name: 'beta' });
+  });
+
+  describe('malformed replies', () => {
+    const addrR = peerSocketAddress(STATE, 47555);
+    let answer = '';
+    let replier;
+    before(async () => {
+      // Answers every request with `answer`, written in two halves so the
+      // client has to reassemble a reply split across chunks.
+      replier = createServer((socket) => {
+        socket.once('data', () => {
+          const half = Math.floor(answer.length / 2);
+          socket.write(answer.slice(0, half));
+          setTimeout(() => socket.end(answer.slice(half)), 30);
+        });
+      });
+      await new Promise((resolve) => replier.listen(addrR, resolve));
+    });
+    after(() => new Promise((resolve) => replier.close(resolve)));
+
+    const ask = async (text) => {
+      answer = text;
+      return requestPeer(addrR, { t: 'ping', from: 'alpha' });
+    };
+
+    it('reassembles a reply split across chunks', async () => {
+      assert.deepEqual(await ask('{"ok":true,"outcome":"injected"}\n'), { ok: true, outcome: 'injected' });
+    });
+
+    it('turns a reply of the wrong shape into a bad-response failure', async () => {
+      for (const text of ['null', '[]', '{"outcome":"x"}', '{"ok":"yes"}', '{"ok":true,"error":5}']) {
+        assert.deepEqual(await ask(`${text}\n`), { ok: false, error: 'bad response' }, text);
+      }
+    });
   });
 
   it('reports held receipts with typing text', async () => {

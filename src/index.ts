@@ -107,6 +107,9 @@ export {
   type SelectOption,
 } from './peers/host.js';
 
+// Socket input checks.
+export { checkFrame, checkReply, type FrameCheck, type FrameRejection } from './peers/wire.js';
+
 // Commands (pure text formatters for tests/consumers).
 export { formatPeersText, formatPeerLine, type PeersSnapshot } from './commands/peers.js';
 // Agent tool surface (registered unconditionally in every mode).

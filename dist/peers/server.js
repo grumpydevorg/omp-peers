@@ -14,6 +14,7 @@
 import { createConnection, createServer } from 'node:net';
 import { rm } from 'node:fs/promises';
 import { peersDir } from '../store/paths.js';
+import { checkFrame, checkReply } from './wire.js';
 /** Max agent-to-agent relays from the last human prompt before refusal. */
 export const MAX_HOPS = 4;
 /** Burst window: frames from one sender inside it become a single wake. */
@@ -83,21 +84,35 @@ export function startPeerServer(opts) {
             reply(first, { ok: false, error: err instanceof Error ? err.message : String(err) });
         }
     }
+    // Frame handlers run fire-and-forget off socket events. A throw escaping
+    // one is an unhandled rejection, and that terminates the host process.
+    function contain(task, what) {
+        task.catch((err) => {
+            try {
+                opts.onWarn?.(`peers: ${what} failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+            catch {
+                // Warning delivery is best-effort.
+            }
+        });
+    }
     async function handleFrame(line, socket) {
-        let frame;
+        let decoded;
         try {
-            frame = JSON.parse(line);
+            decoded = JSON.parse(line);
         }
         catch {
             reply(socket, { ok: false, error: 'bad frame' });
             return;
         }
-        if (frame.t === 'ping') {
-            reply(socket, { ok: true, name: opts.ownName() });
+        const checked = checkFrame(decoded);
+        if (!checked.ok) {
+            reply(socket, { ok: false, error: checked.error });
             return;
         }
-        if (frame.t !== 'msg') {
-            reply(socket, { ok: false, error: 'unknown frame' });
+        const frame = checked.frame;
+        if (frame.t === 'ping') {
+            reply(socket, { ok: true, name: opts.ownName() });
             return;
         }
         const hop = normalizeHop(frame.hop);
@@ -112,10 +127,6 @@ export function startPeerServer(opts) {
                 ok: false,
                 error: `Refused: this message is ${hop} hops from a human prompt and the limit is ${MAX_HOPS}. The chain has to end here — do not resend. Ask your user if it must continue.`,
             });
-            return;
-        }
-        if (typeof frame.from !== 'string' || frame.from === '' || typeof frame.body !== 'string') {
-            reply(socket, { ok: false, error: 'bad frame' });
             return;
         }
         if (frame.ack === true) {
@@ -144,11 +155,11 @@ export function startPeerServer(opts) {
         }
         pending.set(frame.from, {
             bodies: [frame.body],
-            ...(typeof frame.replyTo === 'string' && frame.replyTo !== '' ? { replyTo: frame.replyTo } : {}),
+            ...(frame.replyTo !== undefined && frame.replyTo !== '' ? { replyTo: frame.replyTo } : {}),
             hop,
             first: socket,
         });
-        void deliverBatch(frame.from, socket);
+        contain(deliverBatch(frame.from, socket), 'batch delivery');
     }
     function accept(socket) {
         sockets.add(socket);
@@ -194,7 +205,7 @@ export function startPeerServer(opts) {
                 const line = buffer.slice(0, index);
                 buffer = buffer.slice(index + 1);
                 index = buffer.indexOf('\n');
-                void handleFrame(line, socket);
+                contain(handleFrame(line, socket), 'frame handling');
             }
         });
     }
@@ -318,13 +329,19 @@ export function requestPeer(address, frame, timeoutMs = PEER_REQUEST_TIMEOUT_MS)
                 finish({ ok: false, error: 'response too large' });
                 return;
             }
+            // A reply can arrive split across chunks: wait for its newline.
             const index = buffer.indexOf('\n');
+            if (index === -1)
+                return;
+            let decoded;
             try {
-                finish(JSON.parse(buffer.slice(0, index)));
+                decoded = JSON.parse(buffer.slice(0, index));
             }
             catch {
                 finish({ ok: false, error: 'bad response' });
+                return;
             }
+            finish(checkReply(decoded) ?? { ok: false, error: 'bad response' });
         });
         socket.on('close', () => finish(undefined));
     });

@@ -14,6 +14,7 @@ export { deliverInboundPeerMessage, formatPeerText, isWakeOverBudget, recordPeer
 export { sendToPeer, outboundHop, type HopState, type OutboundDeps } from './peers/outbound.js';
 export { buildPeersNote, appendNoteToMessages, type RosterMode, type RosterMessage, } from './peers/roster.js';
 export { probeHost, listLocalAgentIds, claimBridgedPeer, readTitleSource, readNativeTodos, MAX_PEER_TODOS, MAX_PEER_TODO_TEXT_CHARS, releaseBridgedPeer, peerActivityFor, type HostProbe, type HubBridge, type RegistryLike, type RegistryRefLike, type PeerRequestFn, type CommandContextLike, type ExtensionHostLike, type UiLike, type SelectOption, } from './peers/host.js';
+export { checkFrame, checkReply, type FrameCheck, type FrameRejection } from './peers/wire.js';
 export { formatPeersText, formatPeerLine, type PeersSnapshot } from './commands/peers.js';
 export { registerPeerSendTool, registerPeerStatusTool, registerPeerRequestTool, type PeerSendDeps, type PeerStatusDeps, type PeerRequestDeps, } from './tools.js';
 export * from './errors.js';
