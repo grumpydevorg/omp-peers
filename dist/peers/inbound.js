@@ -15,6 +15,7 @@
  * bridgeless host — and always on the CURRENT pi, never a
  * factory-captured one.
  */
+import { peerKey } from './ids.js';
 /** Per-peer wakes allowed per rolling hour before excess queues as asides. */
 export const MAX_WAKES_PER_PEER_PER_HOUR = 20;
 export const WAKE_WINDOW_MS = 3_600_000;
@@ -97,6 +98,8 @@ export async function deliverInboundPeerMessage(frame, deps) {
         return { outcome: 'acked' };
     }
     const wakes = deps.wakes ?? new Map();
+    // Budget per sender identity, not per name: a rename must not reset it.
+    const wakeKey = peerKey(frame.fromId, from);
     const text = formatPeerText(from, body, { replyTo: frame.replyTo });
     let willWake = true;
     try {
@@ -109,7 +112,7 @@ export async function deliverInboundPeerMessage(frame, deps) {
         warn(cur.ctx, `peers: dropped a message from ${from} — the host has no sendUserMessage`);
         return { outcome: 'dropped', detail: 'no sendUserMessage on host' };
     }
-    if (willWake && isWakeOverBudget(wakes, from, now)) {
+    if (willWake && isWakeOverBudget(wakes, wakeKey, now)) {
         const failure = await aside(cur.pi, cur.ctx, text);
         if (failure !== undefined)
             return { outcome: 'dropped', detail: failure };
@@ -135,7 +138,7 @@ export async function deliverInboundPeerMessage(frame, deps) {
         // `agent` attribution: a peer's words must never carry the user's authority.
         await cur.pi.sendUserMessage(text, { attribution: 'agent' });
         if (willWake)
-            recordPeerWake(wakes, from, now);
+            recordPeerWake(wakes, wakeKey, now);
         return { outcome: willWake ? 'woken' : 'injected' };
     }
     catch (err) {

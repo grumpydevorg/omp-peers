@@ -42,6 +42,10 @@ export interface CommandContextLike {
         id?: string;
     };
     isIdle: () => boolean;
+    /** Which agent this session runs; `sub` for subagents (omp). */
+    agent?: {
+        kind?: string;
+    };
     setInterval?: (callback: () => void, ms?: number) => unknown;
     clearTimer?: (timer: unknown) => void;
     [key: string]: unknown;

@@ -18,6 +18,7 @@
 
 import type { InboundMessage } from './server.js';
 import type { CommandContextLike, ExtensionHostLike } from './host.js';
+import { peerKey } from './ids.js';
 
 /** Per-peer wakes allowed per rolling hour before excess queues as asides. */
 export const MAX_WAKES_PER_PEER_PER_HOUR = 20;
@@ -31,6 +32,7 @@ export const HOLD_POLL_MS = 500;
 
 export interface InboundCarrier {
   from: string;
+  fromId?: string;
   body: string;
   replyTo?: string;
   /** PURE RECEIPT — DISPLAY-ONLY TOAST PATH, NEVER A WAKE. */
@@ -153,6 +155,8 @@ export async function deliverInboundPeerMessage(
   }
 
   const wakes = deps.wakes ?? new Map<string, number[]>();
+  // Budget per sender identity, not per name: a rename must not reset it.
+  const wakeKey = peerKey(frame.fromId, from);
   const text = formatPeerText(from, body, { replyTo: frame.replyTo });
 
   let willWake = true;
@@ -166,7 +170,7 @@ export async function deliverInboundPeerMessage(
     return { outcome: 'dropped', detail: 'no sendUserMessage on host' };
   }
 
-  if (willWake && isWakeOverBudget(wakes, from, now)) {
+  if (willWake && isWakeOverBudget(wakes, wakeKey, now)) {
     const failure = await aside(cur.pi, cur.ctx, text);
     if (failure !== undefined) return { outcome: 'dropped', detail: failure };
     return { outcome: 'aside', detail: 'hourly wake budget exceeded' };
@@ -190,7 +194,7 @@ export async function deliverInboundPeerMessage(
   try {
     // `agent` attribution: a peer's words must never carry the user's authority.
     await cur.pi.sendUserMessage(text, { attribution: 'agent' });
-    if (willWake) recordPeerWake(wakes, from, now);
+    if (willWake) recordPeerWake(wakes, wakeKey, now);
     return { outcome: willWake ? 'woken' : 'injected' };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

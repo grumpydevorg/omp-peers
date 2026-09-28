@@ -26,6 +26,8 @@ export declare const MAX_FRAME_BYTES = 1048576;
 export declare function peerSocketAddress(stateDir: string, pid: number): string;
 export interface InboundMessage {
     from: string;
+    /** Sender's root session id, when the sender is 2.0.0 or later. */
+    fromId?: string;
     body: string;
     replyTo?: string;
     hop: number;

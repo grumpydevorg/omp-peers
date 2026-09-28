@@ -20,11 +20,12 @@ export interface PeersSnapshot {
 /** `backend · omp(1234) · C:\work · model-id · working · beat 3s ago`. */
 export function formatPeerLine(p: PeerRecord, now: number, selfName: string): string {
   const self = p.name === selfName ? ' · you' : '';
+  const tab = p.label !== undefined ? ` (tab ${p.label})` : '';
   const activity = p.activity ? ` · ${p.activity}` : '';
   const todos = p.todos?.length
     ? ` · ${p.todos.length} todo${p.todos.length === 1 ? '' : 's'}`
     : '';
-  return `${p.name} · ${p.harness}(${p.pid}) · ${p.cwd} · ${p.model === '' ? '—' : p.model} · ${p.busy ? 'working' : 'idle'} · beat ${formatBeatAge(p.beatAt, now)}${activity}${todos}${self}`;
+  return `${p.name}${tab} · ${p.harness}(${p.pid}) · ${p.cwd} · ${p.model === '' ? '—' : p.model} · ${p.busy ? 'working' : 'idle'} · beat ${formatBeatAge(p.beatAt, now)}${activity}${todos}${self}`;
 }
 
 export function formatPeersText(snap: PeersSnapshot, now: number): string {

@@ -12,6 +12,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ExtensionHostLike } from './peers/host.js';
 import { formatBeatAge } from './peers/presence.js';
+import { lookupPeer } from './peers/ids.js';
 import type { OutboundDeps } from './peers/outbound.js';
 import type { PeerRecord, PeerTodo, PendingReply } from './types.js';
 
@@ -121,11 +122,9 @@ export function registerPeerStatusTool(pi: ExtensionHostLike, deps: PeerStatusDe
       try {
         const to = typeof params['to'] === 'string' ? (params['to'] as string) : '';
         if (to === '') return { content: [{ type: 'text', text: 'Peer name (`to`) is required.' }] };
-        const peers = await deps.listPeers();
-        const peer = peers.find((p) => p.name === to);
-        if (peer === undefined) {
-          return { content: [{ type: 'text', text: `No live peer named "${to}". Use /peers to see who is live.` }] };
-        }
+        const found = lookupPeer(to, await deps.listPeers());
+        if (!found.found) return { content: [{ type: 'text', text: found.reason }] };
+        const peer = found.record;
         const now = deps.now?.() ?? Date.now();
         const lines = [
           `\`${peer.name}\` is ${peer.busy ? 'working' : 'idle'} in ${peer.cwd} · beat ${formatBeatAge(peer.beatAt, now)}.`,
@@ -146,8 +145,7 @@ export function registerPeerStatusTool(pi: ExtensionHostLike, deps: PeerStatusDe
 
 export interface PeerRequestDeps {
   ownName: () => string;
-  /** Hop for a request to `to` — a request is never a reply, so it may only stay level or advance. */
-  getHop: (to: string) => number;
+  /** Delivers with this node's hop state; a request is never a reply, so it only stays level or advances. */
   send: (to: string, message: string, deps: OutboundDeps) => Promise<string>;
   listPeers: () => Promise<PeerRecord[]>;
   getPendingReplies: () => Map<string, PendingReply> | undefined;
@@ -156,9 +154,9 @@ export interface PeerRequestDeps {
 
 async function statusHintFor(to: string, listPeers: () => Promise<PeerRecord[]>, now: number): Promise<string> {
   try {
-    const peers = await listPeers();
-    const peer = peers.find((p) => p.name === to);
-    if (peer === undefined) return `No live peer named "${to}". Use /peers to see who is live.`;
+    const found = lookupPeer(to, await listPeers());
+    if (!found.found) return found.reason;
+    const peer = found.record;
     return `\`${peer.name}\` is ${peer.busy ? 'working' : 'idle'} · ${peer.activity ?? 'no activity'} · ${peer.todos?.length ?? 0} todos · beat ${formatBeatAge(peer.beatAt, now)}.`;
   } catch {
     return 'Use peer_status for details.';
@@ -219,7 +217,6 @@ export function registerPeerRequestTool(pi: ExtensionHostLike, deps: PeerRequest
       try {
         const receipt = await deps.send(to, message, {
           ownName: deps.ownName(),
-          hop: deps.getHop(to),
           isReply: false,
           listPeers: deps.listPeers,
           replyTo,

@@ -1,47 +1,74 @@
 /**
- * Peer-name validation and cross-process deconfliction.
+ * Peer identity: validation, the base name, collision suffixes and lookup.
  *
- * A peer name is an address: `^[\w.-]{1,24}$`. `Main` is refused
- * (case-sensitive exact match — it names the host's driving agent and must
- * never be taken by a peer), as is any live local subagent id handed in via
- * `localIds`. Cross-process collisions resolve first-wins by `startedAt`;
- * the younger instance auto-suffixes `-<pid>`.
+ * A peer has a stable IDENTITY — its root omp session id, which survives
+ * `omp --resume` — and a human NAME derived from it:
+ *
+ *   base  = the session's `/rename` name (explicit, raw-valid)
+ *         → else the checkout: the git top level of the cwd, or its parent
+ *           when that directory is `main`/`master`/`develop`/`trunk` or a
+ *           version number (`<repo>/main` worktrees)
+ *         → else the cwd basename, sanitised.
+ *   name  = base, unless another live peer publishes the same base
+ *           (case-insensitive); then every sharer takes
+ *           `<base>-<last 4 hex of its session id>` (6 on a 4-hex tie).
+ *
+ * The suffix comes from the session id, not from start order, so the same
+ * session gets the same name after a restart and no peer is renamed when an
+ * unrelated one exits. Names are matched case-insensitively.
  */
 import type { PeerRecord } from '../types.js';
 export declare const PEER_NAME_PATTERN: RegExp;
 export declare function isValidPeerName(name: string): boolean;
 /** Throw {@link PeerNameError} unless `name` is usable as a peer address. */
-export declare function validatePeerName(name: string, opts?: {
-    localIds?: Iterable<string>;
-}): void;
-/** Default address for an instance: sanitized `<basename(cwd)>-<pid>`. */
-export declare function defaultPeerName(cwd: string, pid: number): string;
+export declare function validatePeerName(name: string): void;
 /**
- * Derive a peer address from the host session name. A session name qualifies
- * as an address ONLY in raw form: non-empty, matching
- * {@link PEER_NAME_PATTERN} (1-24 of a-z A-Z 0-9 _ . -), and not the refused
- * host name `Main`. Anything else falls back to {@link defaultPeerName} with
- * `rejected` carrying the raw name so the caller can warn once — except
- * model-generated titles (`titleSource` `"auto"`), which fall back silently:
- * they express no user intent and the host rewrites them. Cross-process
- * collisions still resolve later via {@link resolvePeerName}.
+ * The directory-derived base: the checkout (git top level when known, else
+ * the cwd), stepping up once past a branch- or version-named directory, and
+ * sanitised to the name alphabet. Never empty and never reserved.
  */
-export declare function peerNameFromSession(raw: string | undefined, cwd: string, pid: number, opts?: {
-    titleSource?: string | undefined;
+export declare function directoryBase(cwd: string, gitTopLevel?: string): string;
+/**
+ * The base name: the session name when the user set it (`/rename`) and it
+ * is valid raw, else `dirBase`. Model-generated titles (`titleSource`
+ * `"auto"`) never count and are not reported. A user name that fails
+ * validation comes back as `rejected` so the caller can warn once.
+ */
+export declare function chooseBase(input: {
+    sessionName: string | undefined;
+    titleSource: string | undefined;
+    dirBase: string;
 }): {
-    name: string;
+    base: string;
     rejected?: string;
 };
+/** The base a record publishes; records from older versions carry only their name. */
+export declare function recordBase(record: PeerRecord): string;
 export interface ResolveNameInput {
-    candidate: string;
+    base: string;
+    sessionId: string;
     pid: number;
-    startedAt: number;
+    /** Live peers, own record excluded or not — own pid is skipped. */
     peers: PeerRecord[];
 }
 /**
- * First-wins by `startedAt`: when another live peer holds `candidate` and
- * started no later than us, take `<candidate>-<pid>`. The suffixed form is
- * intentionally exempt from the 24-char cap so it stays deterministic and
- * searchable.
+ * `base` when no other live peer publishes the same base, else
+ * `<base>-<session tail>`. The suffixed form is exempt from the 24-char cap.
+ * A peer without a session id falls back to its pid as the suffix.
  */
 export declare function resolvePeerName(input: ResolveNameInput): string;
+/** The key hop and wake accounting use for a peer: its session id, else its name. */
+export declare function peerKey(sessionId: string | undefined, name: string): string;
+export type PeerLookup = {
+    found: true;
+    record: PeerRecord;
+} | {
+    found: false;
+    reason: string;
+};
+/**
+ * Resolve an address against live peers, case-insensitively: exact name →
+ * an alias held by exactly one peer (tab label or a name held in the last
+ * minutes) → a session id or a prefix of at least 8 of its characters.
+ */
+export declare function lookupPeer(to: string, peers: PeerRecord[]): PeerLookup;

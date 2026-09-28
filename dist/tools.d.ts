@@ -22,8 +22,7 @@ export interface PeerStatusDeps {
 export declare function registerPeerStatusTool(pi: ExtensionHostLike, deps: PeerStatusDeps): void;
 export interface PeerRequestDeps {
     ownName: () => string;
-    /** Hop for a request to `to` — a request is never a reply, so it may only stay level or advance. */
-    getHop: (to: string) => number;
+    /** Delivers with this node's hop state; a request is never a reply, so it only stays level or advances. */
     send: (to: string, message: string, deps: OutboundDeps) => Promise<string>;
     listPeers: () => Promise<PeerRecord[]>;
     getPendingReplies: () => Map<string, PendingReply> | undefined;

@@ -5,7 +5,11 @@
  * record on sight so the next `/peers` is accurate.
  */
 import type { PeerRecord } from '../types.js';
-/** Hop accounting state: where this node's last real inbound delivery came from. */
+/**
+ * Hop accounting state: where this node's last real inbound delivery came
+ * from, as a {@link peerKey} (session id when known), so a peer renaming
+ * mid-conversation does not look like a new relay target.
+ */
 export interface HopState {
     lastInboundPeer: string | undefined;
     lastInboundHop: number;
@@ -23,6 +27,8 @@ export interface HopState {
 export declare function outboundHop(st: HopState, to: string, isReply: boolean): number;
 export interface OutboundDeps {
     ownName: string;
+    /** This node's root session id, sent as `fromId`. */
+    ownId?: string;
     /** Live per-node hop state; when present the hop is derived via {@link outboundHop}. */
     state?: HopState;
     /** True when this send answers the last inbound message (never advances the chain). */
