@@ -493,6 +493,17 @@ export default function peersExtension(pi) {
     // bind a foreign registry copy on compiled hosts, making native `hub` refs
     // best-effort only — `peer_send` (socket → far-end `sendUserMessage`) is the
     // guaranteed reply path in ALL modes.
+    // Sends resolve names from the presence directory at call time, not from
+    // the heartbeat cache: a /rename reaches the directory at the renamer's next
+    // beat, and a cached roster answers "Unknown peer" until the sender's own
+    // next beat as well. The pid filter drops our own record, so a stale own
+    // name (post-/rename) can't route a send back to ourselves.
+    const freshPeers = async () => {
+        const st = liveNode();
+        if (st === undefined)
+            return [];
+        return (await listLivePeers(st.stateDir, st.pid)).filter((p) => p.pid !== st.pid);
+    };
     registerPeerSendTool(pi, {
         send: (to, message, replyTo) => {
             const st = liveNode();
@@ -500,9 +511,7 @@ export default function peersExtension(pi) {
                 ownName: st?.name ?? '',
                 ...(st !== undefined ? { state: st } : {}),
                 isReply: replyTo !== undefined,
-                // st.peers includes our own record — filter by pid so a stale own
-                // name (post-/rename) can't route a send back to ourselves.
-                listPeers: async () => (st?.peers ?? []).filter((p) => p.pid !== st?.pid),
+                listPeers: freshPeers,
                 ...(replyTo !== undefined ? { replyTo } : {}),
                 reap: (record) => {
                     if (st !== undefined)
@@ -512,12 +521,7 @@ export default function peersExtension(pi) {
         },
     });
     registerPeerStatusTool(pi, {
-        listPeers: async () => {
-            const st = liveNode();
-            if (st === undefined)
-                return [];
-            return listLivePeers(st.stateDir, st.pid).then((ps) => ps.filter((p) => p.pid !== st.pid));
-        },
+        listPeers: freshPeers,
     });
     registerPeerRequestTool(pi, {
         ownName: () => liveNode()?.name ?? '',
@@ -525,12 +529,7 @@ export default function peersExtension(pi) {
             const st = liveNode();
             return st === undefined ? 0 : outboundHop(st, to, false);
         },
-        listPeers: async () => {
-            const st = liveNode();
-            if (st === undefined)
-                return [];
-            return (st.peers ?? []).filter((p) => p.pid !== st.pid);
-        },
+        listPeers: freshPeers,
         send: (to, message, outDeps) => {
             const st = liveNode();
             return sendToPeer(to, message, {
