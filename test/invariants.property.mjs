@@ -8,10 +8,12 @@
  *      is proven dead.
  * I5 — every accepted message reaches exactly one end, and the sender's
  *      receipt never claims more than that end.
+ * I6 — a reader never sees a torn presence record while its owner rewrites it
+ *      (POSIX; Windows copies over the target and relies on a read retry).
  */
 
 import assert from 'node:assert/strict';
-import { access, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -20,6 +22,7 @@ import fc from 'fast-check';
 const {
   PEER_TTL_MS,
   createBeatLoop,
+  durableWriteJson,
   createHeldQueue,
   listLivePeers,
   peerSocketAddress,
@@ -446,5 +449,33 @@ describe('I5: every accepted message ends exactly once, as its receipt says', ()
       ),
       { numRuns: 1000 }
     );
+  });
+});
+
+describe('I6: a record is replaced atomically', { skip: process.platform === 'win32' }, () => {
+  it('a reader with no retry parses every read while the owner rewrites the record', async () => {
+    const file = join(STATE, 'atomic.json');
+    // Large enough that a non-atomic replace is observable mid-write.
+    const pad = 'x'.repeat(200_000);
+    await durableWriteJson(file, { n: 0, pad });
+    let writing = true;
+    let reads = 0;
+    const torn = [];
+    const writer = (async () => {
+      for (let n = 1; n <= 200; n += 1) await durableWriteJson(file, { n, pad });
+      writing = false;
+    })();
+    while (writing) {
+      reads += 1;
+      const raw = await readFile(file, 'utf8');
+      try {
+        JSON.parse(raw);
+      } catch {
+        torn.push(raw.length);
+      }
+    }
+    await writer;
+    assert.ok(reads > 100, `only ${reads} reads raced the writer`);
+    assert.deepEqual(torn, [], `${torn.length} of ${reads} reads were torn`);
   });
 });

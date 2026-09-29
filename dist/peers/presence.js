@@ -2,7 +2,7 @@
  * Presence — one owner-written heartbeat file per peer process.
  *
  * `<state>/peers/<pid>.json` is written via `durableWriteJson` (sidecar +
- * fsync + copy-over, never a rename over a live file) on a 15s beat.
+ * fsync, then an atomic rename over the record; a copy on Windows) on a 15s beat.
  *
  * Only the owner writes its record. Anyone else deletes it only once its
  * instance is confirmed dead: the pid is gone, or the beat is stale AND the
