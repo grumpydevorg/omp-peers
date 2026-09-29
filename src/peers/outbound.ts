@@ -7,7 +7,7 @@
  * record to `reap`, which removes it only when its instance is confirmed dead.
  */
 
-import { MAX_HOPS, requestPeer, WRONG_PEER } from './server.js';
+import { LEFT, MAX_HOPS, requestPeer, WRONG_PEER } from './server.js';
 import { lookupPeer, peerKey } from './ids.js';
 import type { PeerRecord, PeerReply } from '../types.js';
 
@@ -56,6 +56,12 @@ export interface OutboundDeps {
   reap?: (record: PeerRecord) => Promise<void> | void;
 }
 
+/** A peer that left the peer list receives nothing; say so, and when (local HH:MM). */
+function leftReceipt(name: string, at: number): string {
+  const time = new Date(at).toTimeString().slice(0, 5);
+  return `Not delivered: \`${name}\` left the peer list at ${time} and is not receiving messages. Its user can rejoin with \`/peers join\`.`;
+}
+
 function refusal(hop: number): string {
   return `Refused: this message is ${hop} hops from a human prompt and the limit is ${MAX_HOPS}. The chain has to end here — do not resend. Ask your user if it must continue.`;
 }
@@ -72,6 +78,7 @@ export async function sendToPeer(to: string, message: string, deps: OutboundDeps
     const found = lookupPeer(name, await deps.listPeers());
     if (!found.found) return found.reason;
     let record = found.record;
+    if (record.left !== undefined) return leftReceipt(record.name, record.left);
     const hop =
       deps.hop ??
       (deps.state !== undefined
@@ -114,6 +121,7 @@ export async function sendToPeer(to: string, message: string, deps: OutboundDeps
       }
       return `No response from ${record.name} (socket closed).`;
     }
+    if (!reply.ok && reply.error === LEFT) return leftReceipt(record.name, Date.now());
     if (!reply.ok) return `Delivery to ${record.name} failed: ${reply.error ?? 'unknown error'}`;
     if (reply.outcome === 'dropped') return `Delivery to ${record.name} failed (dropped by receiver)`;
     if (reply.outcome === 'aside') return `Queued at ${record.name} (wake budget reached — delivers without waking)`;

@@ -39,6 +39,8 @@ export interface BeatInput {
   label?: string;
   aliases?: string[];
   instanceId?: string;
+  /** Set while the owner has left the peer list (`/peers leave`). */
+  left?: number;
 }
 
 /** Field shape shared by every schema version (version gate lives in isPeerRecord). Checks every field a reader uses. */
@@ -62,6 +64,7 @@ function hasPeerRecordShape(value: unknown): value is Record<string, unknown> {
     optionalString('base') &&
     optionalString('label') &&
     optionalString('instanceId') &&
+    (r['left'] === undefined || typeof r['left'] === 'number') &&
     (r['aliases'] === undefined ||
       (Array.isArray(r['aliases']) && r['aliases'].every((alias) => typeof alias === 'string'))) &&
     (r['todos'] === undefined ||
@@ -178,6 +181,7 @@ export async function writePeerBeat(input: BeatInput): Promise<PeerRecord> {
   if (input.label !== undefined && input.label !== '') record.label = input.label;
   if (input.aliases !== undefined && input.aliases.length > 0) record.aliases = input.aliases;
   if (input.instanceId !== undefined && input.instanceId !== '') record.instanceId = input.instanceId;
+  if (input.left !== undefined) record.left = input.left;
   const file = peerPath(pid, input.stateDir);
   // chmod only on first write — the file keeps its mode across refreshes,
   // so re-chmodding every 15s beat is wasted syscalls.

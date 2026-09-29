@@ -11,6 +11,8 @@
  * I6 — a reader never sees a torn presence record while its owner rewrites it
  *      (POSIX; Windows copies over the target and relies on a read retry).
  * I7 — a node's record appears only once its socket accepts connections.
+ * I8 — while a node has left the peer list, nothing reaches its host, and
+ *      every sender's receipt says what happened.
  */
 
 import assert from 'node:assert/strict';
@@ -546,6 +548,163 @@ describe('I7: a record is published only once its socket listens', () => {
     } finally {
       handlers['session_shutdown']();
       await new Promise((r) => setTimeout(r, 200));
+    }
+  });
+});
+
+describe('I8: a node that left lets nothing reach its host', () => {
+  let pid = 48600;
+
+  it('leaves and joins racing sends and coalesce windows: the host sees nothing while left, and every receipt matches', async () => {
+    const step = fc.oneof(
+      { arbitrary: fc.record({ kind: fc.constant('send'), sender: fc.constantFrom('s1', 's2') }), weight: 3 },
+      { arbitrary: fc.constant({ kind: 'toggle' }), weight: 1 }
+    );
+    await fc.assert(
+      fc.asyncProperty(
+        fc.array(fc.tuple(step, fc.integer({ min: 0, max: 40 })), { minLength: 1, maxLength: 10 }),
+        async (steps) => {
+          pid += 1;
+          let left = false;
+          const reached = new Set();
+          const server = startPeerServer({
+            address: peerSocketAddress(STATE, pid),
+            ownName: () => 'leaver',
+            ownId: () => 'leaver-id',
+            coalesceMs: 30,
+            refuse: () => (left ? 'left' : undefined),
+            onMessage: async (msg) => {
+              assert.equal(left, false, `host reached while left: ${msg.body}`);
+              for (const line of msg.body.split('\n')) {
+                const body = /m\d+-\d+/.exec(line)?.[0];
+                if (body !== undefined) reached.add(body);
+              }
+              return 'injected';
+            },
+          });
+          assert.equal(await server.listening, true);
+          try {
+            const sends = [];
+            let n = 0;
+            for (const [s, wait] of steps) {
+              await new Promise((r) => setTimeout(r, wait));
+              if (s.kind === 'toggle') {
+                left = !left;
+                continue;
+              }
+              n += 1;
+              const body = `m${pid}-${n}`;
+              sends.push(
+                requestPeer(server.address, { t: 'msg', from: s.sender, fromId: s.sender, body, hop: 0 }).then(
+                  (reply) => ({
+                    body,
+                    reply,
+                  })
+                )
+              );
+            }
+            for (const { body, reply } of await Promise.all(sends)) {
+              if (reached.has(body)) assert.deepEqual(reply, { ok: true, outcome: 'injected' }, body);
+              else assert.deepEqual(reply, { ok: false, error: 'left' }, body);
+            }
+          } finally {
+            server.stop();
+          }
+        }
+      ),
+      { numRuns: 40 }
+    );
+  });
+
+  it('/peers leave refuses messages, tells senders without a round trip, survives a resume; /peers join undoes it', async () => {
+    process.env.OMP_PEERS_DIR = STATE;
+    const branch = []; // The session's entries, as omp's getBranch returns them.
+    const commands = {};
+    const tools = {};
+    const handlers = {};
+    const peersExtension = (await import('../dist/extension.js')).default;
+    peersExtension({
+      registerCommand: (name, def) => {
+        commands[name] = def;
+      },
+      registerTool: (def) => {
+        tools[def.name] = def;
+      },
+      on: (event, handler) => {
+        handlers[event] = handler;
+      },
+      sendUserMessage: () => {},
+      appendEntry: (customType, data) => branch.push({ type: 'custom', customType, data }),
+    });
+    const notes = [];
+    const ctx = {
+      cwd: join(STATE, 'leaver'),
+      mode: 'print',
+      ui: { notify: (text) => notes.push(text) },
+      sessionManager: { getSessionId: () => 'sess-leaver', getBranch: () => branch },
+      isIdle: () => true,
+    };
+    const recordFile = join(STATE, 'peers', `${process.pid}.json`);
+    const read = () => readFile(recordFile, 'utf8').then(JSON.parse);
+    const boot = async () => {
+      handlers['session_start'](undefined, ctx);
+      for (let i = 0; i < 200; i += 1) {
+        if (
+          await read().then(
+            () => true,
+            () => false
+          )
+        )
+          return;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    };
+    const sendAsOther = (to) =>
+      sendToPeer(to, 'hello', {
+        ownName: 'other',
+        hop: 0,
+        listPeers: async () => listLivePeers(STATE, 0),
+      });
+    await boot();
+    try {
+      const name = (await read()).name;
+      assert.match(await sendAsOther(name), /^Delivered to/);
+
+      await commands['peers'].handler('leave', ctx);
+      assert.match(notes.at(-1), /Left the peer list/);
+      const record = await read();
+      assert.equal(typeof record.left, 'number', 'the record says it left');
+      assert.equal(record.instanceId !== undefined, true);
+      // Senders see it from the record, and a raw frame is refused unread.
+      assert.match(await sendAsOther(name), /left the peer list at \d\d:\d\d/);
+      const raw = await requestPeer(record.socket, { t: 'msg', from: 'x', body: 'sneak', hop: 0 });
+      assert.deepEqual(raw, { ok: false, error: 'left' });
+      // It cannot message out either, and its own note says so.
+      const out = await tools['peer_send'].execute('1', { to: 'anyone', message: 'hi' });
+      assert.match(out.content[0].text, /left the peer list/);
+      const prompt = handlers['context']({ messages: [{ role: 'user', content: 'q' }] }, ctx);
+      assert.match(prompt.messages.at(-1).content, /have left the peer list/);
+      // Still listed (alive, answering pings), never reaped, and hidden from others' notes.
+      assert.ok((await listLivePeers(STATE, 0)).some((p) => p.pid === process.pid));
+
+      // Resume: the choice is read back from the session.
+      handlers['session_shutdown']();
+      await new Promise((r) => setTimeout(r, 300));
+      await boot();
+      assert.equal(typeof (await read()).left, 'number', 'still left after a resume');
+
+      await commands['peers'].handler('join', ctx);
+      assert.match(notes.at(-1), /Rejoined the peer list/);
+      assert.equal((await read()).left, undefined);
+      assert.match(await sendAsOther(name), /^Delivered to/);
+      assert.deepEqual(
+        branch.map((e) => e.data.left === null),
+        [false, true],
+        'one saved entry per choice'
+      );
+    } finally {
+      handlers['session_shutdown']();
+      await new Promise((r) => setTimeout(r, 300));
     }
   });
 });

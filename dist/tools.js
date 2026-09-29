@@ -138,6 +138,9 @@ export function registerPeerRequestTool(pi, deps) {
                 resolve = res;
                 reject = rej;
             });
+            // Shutdown or leave can reject this while send() is still in flight,
+            // before anything awaits it; unhandled, that rejection ends the process.
+            promise.catch(() => undefined);
             pending.set(replyTo, { resolve, reject });
             try {
                 const receipt = await deps.send(to, message, {

@@ -21,7 +21,7 @@
 import { randomUUID } from 'node:crypto';
 import { registerPeersCommand } from './commands/peers.js';
 import { createBeatLoop } from './peers/beat.js';
-import { detectHarness, readNativeTodos, readTitleSource } from './peers/host.js';
+import { detectHarness, PRESENCE_ENTRY, readLeft, readNativeTodos, readTitleSource } from './peers/host.js';
 import { chooseBase, directoryBase, isValidPeerName, nameRoster, peerKey } from './peers/ids.js';
 import { createEnvLookups } from './peers/context.js';
 import { createHeldQueue } from './peers/held.js';
@@ -29,7 +29,7 @@ import { deliverInboundPeerMessage, HOLD_POLL_MS, MAX_HELD_BATCHES, } from './pe
 import { sendToPeer } from './peers/outbound.js';
 import { HEARTBEAT_MS, listLivePeers, reapPeer, removeOwnRecord, startPresenceBeat, writePeerBeat, } from './peers/presence.js';
 import { appendNoteToMessages, buildPeersNote } from './peers/roster.js';
-import { peerSocketAddress, startPeerServer } from './peers/server.js';
+import { LEFT, peerSocketAddress, startPeerServer } from './peers/server.js';
 import { ensureStateDirs, resolveStateDir } from './store/paths.js';
 import { registerPeerSendTool, registerPeerStatusTool, registerPeerRequestTool } from './tools.js';
 const HARNESS = await detectHarness();
@@ -101,6 +101,64 @@ async function tellDropped(st, batch, reason) {
         ack: true,
         listPeers: () => rosterOf(st),
     });
+}
+/** A held queue for the node `node()` returns; a rejoin gets a fresh one, since a drain is final. */
+function newHeldQueue(node) {
+    return createHeldQueue({
+        max: MAX_HELD_BATCHES,
+        deliver: (batch) => deliverHeld(node(), batch),
+        dropped: (batch, reason) => tellDropped(node(), batch, reason),
+        onError: (err) => logOf(node(), `peers: held delivery failed: ${err instanceof Error ? err.message : String(err)}`),
+    });
+}
+/** Drain `queue`, telling each held batch's sender `reason`; bounded so an unresponsive sender cannot stall. */
+async function drainBounded(queue, reason) {
+    await Promise.race([
+        queue.drain(reason),
+        new Promise((resolve) => setTimeout(resolve, DRAIN_NOTICE_MS).unref()),
+    ]);
+}
+/** What this node's own sends return while it has left the peer list. */
+const NOT_WHILE_LEFT = 'Not sent: this session has left the peer list. Your user can rejoin with `/peers join`.';
+/**
+ * Leave the peer list: from now on every message is refused with `left` —
+ * the server checks on arrival and again before a coalesced batch reaches
+ * the host. Held batches are dropped with their senders told, requests
+ * waiting for replies end, and the next beat publishes `left` so senders
+ * see it without a round trip. The node keeps beating and listening: its
+ * name stays taken and no other peer reaps it as dead.
+ */
+async function leave(st, at) {
+    if (st.left !== undefined)
+        return;
+    st.left = at;
+    for (const entry of st.pendingReplies.values()) {
+        clearTimeout(entry.timer);
+        entry.reject(new Error('this session left the peer list'));
+    }
+    st.pendingReplies.clear();
+    if (st.holdTimer !== undefined) {
+        clearInterval(st.holdTimer);
+        st.holdTimer = undefined;
+    }
+    const held = st.held;
+    st.held = newHeldQueue(() => st);
+    await drainBounded(held, 'the peer left the peer list');
+    await st.beat.request();
+}
+/** Rejoin: messages are accepted again, and the next beat drops `left`. */
+async function join(st) {
+    if (st.left === undefined)
+        return;
+    st.left = undefined;
+    await st.beat.request();
+}
+/** Take on a session's choice after a switch: `left` is when it left, or undefined. */
+async function followSession(st, left) {
+    if (left !== undefined)
+        await leave(st, left);
+    else
+        await join(st);
 }
 function warnOf(st, text) {
     try {
@@ -227,6 +285,7 @@ async function tick(st) {
             busy,
             ...(activity !== undefined && activity !== '' ? { activity } : {}),
             ...(st.nativeTodos.length > 0 ? { todos: st.nativeTodos } : {}),
+            ...(st.left !== undefined ? { left: st.left } : {}),
         });
         st.publishedName = own.name;
     }
@@ -274,8 +333,12 @@ function ensureNode(pi, ctx) {
         catch {
             sessionId = '';
         }
-        if (existing.listening && sessionId !== '' && sessionId !== existing.sessionId)
-            armBeatTimer(existing, ctx);
+        if (sessionId !== '' && sessionId !== existing.sessionId) {
+            // Leaving belongs to a session: a switch takes on the new session's choice.
+            void followSession(existing, readLeft(ctx.sessionManager));
+            if (existing.listening)
+                armBeatTimer(existing, ctx);
+        }
         return existing;
     }
     try {
@@ -297,12 +360,7 @@ function ensureNode(pi, ctx) {
             wakes: new Map(),
             lastInboundPeer: undefined,
             lastInboundHop: 0,
-            held: createHeldQueue({
-                max: MAX_HELD_BATCHES,
-                deliver: (batch) => deliverHeld(st, batch),
-                dropped: (batch, reason) => tellDropped(st, batch, reason),
-                onError: (err) => logOf(st, `peers: held delivery failed: ${err instanceof Error ? err.message : String(err)}`),
-            }),
+            held: newHeldQueue(() => st),
             holdTimer: undefined,
             current: { pi, ctx },
             server: undefined,
@@ -314,6 +372,7 @@ function ensureNode(pi, ctx) {
             nativeTodos: [],
             nativeActivity: undefined,
             pendingReplies: new Map(),
+            left: readLeft(ctx.sessionManager),
         };
         const cwd = typeof ctx.cwd === 'string' && ctx.cwd !== '' ? ctx.cwd : process.cwd();
         st.sessionId = hostRead(st, 'session id', () => ctx.sessionManager?.getSessionId?.() ?? '', '');
@@ -364,6 +423,7 @@ function ensureNode(pi, ctx) {
                         holdBatch(live, msg);
                     return res.outcome;
                 },
+                refuse: () => (st.left !== undefined ? LEFT : undefined),
                 onWarn: (text) => {
                     const live = liveNode();
                     if (live !== undefined)
@@ -448,10 +508,7 @@ async function stopNode(st) {
     // Senders of held batches were told `held`: each now hears its batch will
     // not be delivered. Bounded, so a peer that does not answer cannot stall
     // shutdown.
-    await Promise.race([
-        st.held.drain('the peer shut down'),
-        new Promise((resolve) => setTimeout(resolve, DRAIN_NOTICE_MS).unref()),
-    ]);
+    await drainBounded(st.held, 'the peer shut down');
     if (hasSuccessor())
         return;
     try {
@@ -478,7 +535,12 @@ export default function peersExtension(pi) {
                 // Fresh beat before rendering: a just-run /rename must be visible
                 // immediately, not on the next 15s tick. The loop owns its failures.
                 await st.beat.request();
-                return { ownName: st.name, peers: st.peers, held: st.held.size };
+                return {
+                    ownName: st.name,
+                    peers: st.peers,
+                    held: st.held.size,
+                    ...(st.left !== undefined ? { left: st.left } : {}),
+                };
             }
             return { ownName: '', peers: [], held: 0 };
         },
@@ -489,6 +551,8 @@ export default function peersExtension(pi) {
         // Typed by the user, so it starts a fresh chain: hop 0, never a relay.
         sendAsUser: (to, body) => {
             const st = liveNode();
+            if (st?.left !== undefined)
+                return Promise.resolve(NOT_WHILE_LEFT);
             return sendToPeer(to, body, {
                 ownName: st?.name ?? '',
                 ...(st !== undefined ? { ownId: st.sessionId } : {}),
@@ -501,10 +565,33 @@ export default function peersExtension(pi) {
                 },
             });
         },
+        leave: async () => {
+            const st = liveNode();
+            if (st === undefined)
+                return 'peers are not running in this session.';
+            if (st.left !== undefined)
+                return 'This session has already left the peer list. `/peers join` to rejoin.';
+            await leave(st, Date.now());
+            // Saved with the session: `omp --resume` and reloads stay out.
+            pi.appendEntry?.(PRESENCE_ENTRY, { left: st.left });
+            return `Left the peer list as \`${st.name}\`: peers see you as left and cannot message you, and you cannot message them. Saved with this session; \`/peers join\` to rejoin.`;
+        },
+        join: async () => {
+            const st = liveNode();
+            if (st === undefined)
+                return 'peers are not running in this session.';
+            if (st.left === undefined)
+                return `This session is already in the peer list as \`${st.name}\`.`;
+            await join(st);
+            pi.appendEntry?.(PRESENCE_ENTRY, { left: null });
+            return `Rejoined the peer list as \`${st.name}\`.`;
+        },
     });
     registerPeerSendTool(pi, {
         send: (to, message, replyTo, ack) => {
             const st = liveNode();
+            if (st?.left !== undefined)
+                return Promise.resolve(NOT_WHILE_LEFT);
             return sendToPeer(to, message, {
                 ownName: st?.name ?? '',
                 ...(st !== undefined ? { state: st, ownId: st.sessionId } : {}),
@@ -527,6 +614,8 @@ export default function peersExtension(pi) {
         listPeers: freshPeers,
         send: (to, message, outDeps) => {
             const st = liveNode();
+            if (st?.left !== undefined)
+                return Promise.resolve(NOT_WHILE_LEFT);
             return sendToPeer(to, message, {
                 ...outDeps,
                 ...(st !== undefined
@@ -638,7 +727,7 @@ export default function peersExtension(pi) {
         const cwd = typeof ctx?.cwd === 'string' && ctx.cwd !== '' ? ctx.cwd : process.cwd();
         const others = assignName(st, currentBase(st, cwd), st.peers);
         // Always inject: the agent learns its OWN peer name here, even solo.
-        const note = buildPeersNote(st.name, others);
+        const note = buildPeersNote(st.name, others, { left: st.left !== undefined });
         const payload = event;
         if (payload === undefined || !Array.isArray(payload.messages))
             return undefined;

@@ -165,3 +165,29 @@ export function readNativeTodos(manager) {
     }
     return [];
 }
+/** Session entry type recording that this session left or rejoined the peer list. */
+export const PRESENCE_ENTRY = 'omp-peers.presence';
+/**
+ * When this session left the peer list, or undefined when it is in it: the
+ * newest `omp-peers.presence` entry on the active branch wins. A session that
+ * never left, or a host without session entries, is in the peer list.
+ */
+export function readLeft(manager) {
+    let entries;
+    try {
+        entries = manager?.getBranch?.() ?? manager?.getEntries?.() ?? [];
+    }
+    catch {
+        return undefined;
+    }
+    if (!Array.isArray(entries))
+        return undefined;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const entry = asRecord(entries[index]);
+        if (entry?.['type'] !== 'custom' || entry['customType'] !== PRESENCE_ENTRY)
+            continue;
+        const left = asRecord(entry['data'])?.['left'];
+        return typeof left === 'number' ? left : undefined;
+    }
+    return undefined;
+}

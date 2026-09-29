@@ -19,8 +19,14 @@ export interface RosterMessage {
         text?: string;
     }>;
 }
-/** Identity line + contact rule + peer definition + one row per peer (solo compacts to one line). */
-export declare function buildPeersNote(ownName: string, peers: PeerRecord[]): string;
+/**
+ * Identity line + contact rule + peer definition + one row per peer (solo
+ * compacts to one line). Peers that left the peer list are not rows: nobody
+ * can reach them. A node that left itself gets one line saying so.
+ */
+export declare function buildPeersNote(ownName: string, all: PeerRecord[], opts?: {
+    left?: boolean;
+}): string;
 /**
  * Fold `note` into the last user message (string content is suffixed, array
  * content is pushed) or append a fresh user message when none exists.

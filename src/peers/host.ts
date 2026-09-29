@@ -101,6 +101,8 @@ export interface ExtensionHostLike {
     content: string,
     options?: { deliverAs?: 'steer' | 'followUp' | 'aside'; attribution?: 'user' | 'agent' }
   ) => void | Promise<void>;
+  /** Persist a custom entry in the current session (omp `pi.appendEntry`); read back from `getBranch`. */
+  appendEntry?: (customType: string, data: unknown) => void;
   getSessionName?: () => string | undefined;
   logger?: { warn(message: string): void };
 }
@@ -253,4 +255,29 @@ export function readNativeTodos(manager: SessionManagerLike | undefined | null):
     if (phases !== undefined) return mapNativeTodos(phases);
   }
   return [];
+}
+
+/** Session entry type recording that this session left or rejoined the peer list. */
+export const PRESENCE_ENTRY = 'omp-peers.presence';
+
+/**
+ * When this session left the peer list, or undefined when it is in it: the
+ * newest `omp-peers.presence` entry on the active branch wins. A session that
+ * never left, or a host without session entries, is in the peer list.
+ */
+export function readLeft(manager: SessionManagerLike | undefined | null): number | undefined {
+  let entries: unknown;
+  try {
+    entries = manager?.getBranch?.() ?? manager?.getEntries?.() ?? [];
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(entries)) return undefined;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = asRecord(entries[index]);
+    if (entry?.['type'] !== 'custom' || entry['customType'] !== PRESENCE_ENTRY) continue;
+    const left = asRecord(entry['data'])?.['left'];
+    return typeof left === 'number' ? left : undefined;
+  }
+  return undefined;
 }

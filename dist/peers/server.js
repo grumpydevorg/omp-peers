@@ -27,6 +27,8 @@ export const SOCKET_IDLE_MS = 30_000;
 export const MAX_FRAME_BYTES = 1_048_576;
 /** Reply error for a message addressed to another instance than the one listening here. */
 export const WRONG_PEER = 'wrong peer';
+/** Reply error from a node that has left the peer list. */
+export const LEFT = 'left';
 /** Where this peer listens (and where others reach it). */
 export function peerSocketAddress(stateDir, pid) {
     if (process.platform === 'win32')
@@ -71,6 +73,12 @@ export function startPeerServer(opts) {
         pending.delete(key);
         if (batch === undefined)
             return;
+        const refused = opts.refuse?.();
+        if (refused !== undefined) {
+            for (const member of batch.members)
+                reply(member, { ok: false, error: refused });
+            return;
+        }
         const bodies = batch.bodies.length > 0 ? batch.bodies : [''];
         const body = bodies.length === 1
             ? bodies[0]
@@ -132,6 +140,11 @@ export function startPeerServer(opts) {
         // before anything reaches the host, so the sender can re-resolve.
         if (frame.toId !== undefined && frame.toId !== opts.ownId()) {
             reply(socket, { ok: false, error: WRONG_PEER });
+            return;
+        }
+        const refused = opts.refuse?.();
+        if (refused !== undefined) {
+            reply(socket, { ok: false, error: refused });
             return;
         }
         const hop = normalizeHop(frame.hop);

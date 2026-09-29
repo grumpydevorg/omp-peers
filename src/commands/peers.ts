@@ -6,6 +6,8 @@
  * named in the title, not offered as a row — and picking one opens an action
  * menu: Message, Status, Hand to my agent. No UI module is ever imported; the
  * primitives are probed on the live ctx and called as receiver methods.
+ * `/peers leave` and `/peers join` take this session out of the peer list and
+ * back; the choice is saved with the session.
  *
  * `/msg <peer> <text>` and the Message action send text the user typed
  * straight to the peer, without a turn of this session's agent. The frame is
@@ -23,6 +25,8 @@ export interface PeersSnapshot {
   peers: PeerRecord[];
   /** Batches held while the peer types — shown so held mail is visible. */
   held?: number;
+  /** When this session left the peer list; absent while it is in it. */
+  left?: number;
 }
 
 export interface PeerCommandDeps {
@@ -32,6 +36,9 @@ export interface PeerCommandDeps {
   cachedSnapshot: () => PeersSnapshot;
   /** Deliver text the user typed; resolves to the human-readable receipt. Never throws. */
   sendAsUser: (to: string, body: string) => Promise<string>;
+  /** Leave or rejoin the peer list; resolves to what to tell the user. */
+  leave: () => Promise<string>;
+  join: () => Promise<string>;
 }
 
 /**
@@ -153,10 +160,31 @@ async function runPeerAction(
 
 export function registerPeersCommand(pi: ExtensionHostLike, deps: PeerCommandDeps): void {
   pi.registerCommand('peers', {
-    description: 'List live peers; pick one to message it, see its status, or hand it to your agent',
-    handler: async (_args: string, ctx: CommandContextLike) => {
+    description:
+      'List live peers and act on one; `/peers leave` or `/peers join` takes this session out of the peer list and back',
+    getArgumentCompletions: (prefix: string) =>
+      ['leave', 'join']
+        .filter((word) => word.startsWith(prefix.trim().toLowerCase()))
+        .map((word) => ({ value: word, label: word })),
+    handler: async (args: string, ctx: CommandContextLike) => {
       try {
+        const action = args.trim().toLowerCase();
+        if (action === 'leave' || action === 'join') {
+          notify(ctx, await (action === 'leave' ? deps.leave() : deps.join()));
+          return;
+        }
+        if (action !== '') {
+          notify(ctx, 'Usage: /peers, /peers leave, or /peers join', 'warning');
+          return;
+        }
         const snap = await deps.getSnapshot();
+        if (snap.left !== undefined) {
+          notify(
+            ctx,
+            `You left the peer list at ${new Date(snap.left).toTimeString().slice(0, 5)}: peers cannot message you and you cannot message them. \`/peers join\` to rejoin.`
+          );
+          return;
+        }
         const select = ctx.ui?.select;
         const others = snap.peers.filter((p) => p.name !== snap.ownName).sort((a, b) => a.name.localeCompare(b.name));
         if (typeof select === 'function' && ctx.mode === 'tui' && others.length > 0) {

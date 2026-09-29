@@ -19,8 +19,20 @@ export interface RosterMessage {
   content: string | Array<{ type: string; text?: string }>;
 }
 
-/** Identity line + contact rule + peer definition + one row per peer (solo compacts to one line). */
-export function buildPeersNote(ownName: string, peers: PeerRecord[]): string {
+/**
+ * Identity line + contact rule + peer definition + one row per peer (solo
+ * compacts to one line). Peers that left the peer list are not rows: nobody
+ * can reach them. A node that left itself gets one line saying so.
+ */
+export function buildPeersNote(ownName: string, all: PeerRecord[], opts: { left?: boolean } = {}): string {
+  if (opts.left === true) {
+    return [
+      `<peers>`,
+      `You are \`${ownName}\` and have left the peer list: peers cannot message you and you cannot message them. Only your user can rejoin, with \`/peers join\`.`,
+      `</peers>`,
+    ].join('\n');
+  }
+  const peers = all.filter((peer) => peer.left === undefined);
   if (peers.length === 0)
     return [`<peers>`, `You are \`${ownName}\`. No other peers are live right now.`, `</peers>`].join('\n');
   // pid in every row: suffixed collision names (e.g. `test-peer` vs
