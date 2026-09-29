@@ -22,6 +22,8 @@ export declare const PEER_REQUEST_TIMEOUT_MS = 8000;
 export declare const SOCKET_IDLE_MS = 30000;
 /** Largest buffered frame per socket before the connection is dropped. */
 export declare const MAX_FRAME_BYTES = 1048576;
+/** Reply error for a message addressed to another instance than the one listening here. */
+export declare const WRONG_PEER = "wrong peer";
 /** Where this peer listens (and where others reach it). */
 export declare function peerSocketAddress(stateDir: string, pid: number): string;
 export interface InboundMessage {
@@ -39,6 +41,8 @@ export interface InboundMessage {
 export interface PeerServerOptions {
     address: string;
     ownName: () => string;
+    /** This node boot's `instanceId`: pings answer with it, and a message addressed to another id is refused. */
+    ownId: () => string;
     onMessage: (msg: InboundMessage) => Promise<string>;
     onWarn?: (message: string) => void;
     coalesceMs?: number;

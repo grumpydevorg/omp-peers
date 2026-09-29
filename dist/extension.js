@@ -18,6 +18,7 @@
  * event below). Subagent sessions load this extension too; their events are
  * ignored, so a subagent never becomes the published identity.
  */
+import { randomUUID } from 'node:crypto';
 import { registerPeersCommand } from './commands/peers.js';
 import { detectHarness, readNativeTodos, readTitleSource } from './peers/host.js';
 import { chooseBase, directoryBase, isValidPeerName, nameRoster, peerKey } from './peers/ids.js';
@@ -212,6 +213,7 @@ async function tick(st) {
             ...(st.sessionId !== '' ? { sessionId: st.sessionId } : {}),
             ...(model !== '' ? { model } : {}),
             socket: st.socketAddress,
+            instanceId: st.instanceId,
             startedAt: st.startedAt,
             busy,
             ...(activity !== undefined && activity !== '' ? { activity } : {}),
@@ -272,6 +274,7 @@ function ensureNode(pi, ctx) {
         const st = {
             stateDir,
             pid: process.pid,
+            instanceId: randomUUID(),
             startedAt: Date.now(),
             socketAddress: peerSocketAddress(stateDir, process.pid),
             name: '',
@@ -307,6 +310,7 @@ function ensureNode(pi, ctx) {
             st.server = startPeerServer({
                 address: st.socketAddress,
                 ownName: () => liveNode()?.name ?? '',
+                ownId: () => st.instanceId,
                 onMessage: async (msg) => {
                     const live = liveNode();
                     const replyTo = msg.replyTo;

@@ -34,10 +34,11 @@ export function checkFrame(value: unknown): FrameCheck {
   if (typeof from !== 'string') return { ok: false, error: 'bad frame' };
   if (t === 'ping') return { ok: true, frame: { t: 'ping', from } };
 
-  const { fromId, body, replyTo, hop, ack, human } = value;
+  const { fromId, toId, body, replyTo, hop, ack, human } = value;
   if (
     from === '' ||
     (fromId !== undefined && typeof fromId !== 'string') ||
+    (toId !== undefined && typeof toId !== 'string') ||
     typeof body !== 'string' ||
     (replyTo !== undefined && typeof replyTo !== 'string') ||
     (hop !== undefined && typeof hop !== 'number') ||
@@ -52,6 +53,7 @@ export function checkFrame(value: unknown): FrameCheck {
       t: 'msg',
       from,
       ...(fromId !== undefined ? { fromId } : {}),
+      ...(toId !== undefined ? { toId } : {}),
       body,
       ...(replyTo !== undefined ? { replyTo } : {}),
       ...(hop !== undefined ? { hop } : {}),
@@ -64,11 +66,12 @@ export function checkFrame(value: unknown): FrameCheck {
 /** Accept a decoded socket value as a {@link PeerReply}, or `undefined`. */
 export function checkReply(value: unknown): PeerReply | undefined {
   if (!isObject(value)) return undefined;
-  const { ok, outcome, name, error } = value;
+  const { ok, outcome, name, id, error } = value;
   if (typeof ok !== 'boolean') return undefined;
   if (
     (outcome !== undefined && typeof outcome !== 'string') ||
     (name !== undefined && typeof name !== 'string') ||
+    (id !== undefined && typeof id !== 'string') ||
     (error !== undefined && typeof error !== 'string')
   ) {
     return undefined;
@@ -77,6 +80,7 @@ export function checkReply(value: unknown): PeerReply | undefined {
     ok,
     ...(outcome !== undefined ? { outcome } : {}),
     ...(name !== undefined ? { name } : {}),
+    ...(id !== undefined ? { id } : {}),
     ...(error !== undefined ? { error } : {}),
   };
 }

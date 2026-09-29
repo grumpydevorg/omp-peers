@@ -67,6 +67,12 @@ export interface PeerRecord {
     label?: string;
     /** Other names this peer answers to: its tab label and names it held in the last minutes. */
     aliases?: string[];
+    /**
+     * Random id of this node boot, unique per process start: the address a
+     * message is delivered to (`toId`) and what a ping answers with. Absent in
+     * records from 1.4.0 and older.
+     */
+    instanceId?: string;
 }
 /**
  * Frame exchanged over a peer socket, one JSON object per line. `human` marks
@@ -78,6 +84,8 @@ export type PeerFrame = {
     t: 'msg';
     from: string;
     fromId?: string;
+    /** The receiver's `instanceId` as the sender resolved it; a receiver with another id refuses. */
+    toId?: string;
     body: string;
     replyTo?: string;
     hop?: number;
@@ -92,6 +100,8 @@ export interface PeerReply {
     ok: boolean;
     outcome?: string;
     name?: string;
+    /** The replier's `instanceId` (ping replies from 2.0.0 on). */
+    id?: string;
     error?: string;
 }
 /** In-flight request a peer is waiting for a reply to. */

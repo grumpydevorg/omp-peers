@@ -302,6 +302,7 @@ describe('outbound frame → inbound path', () => {
     server = startPeerServer({
       address: addrB,
       ownName: () => 'beta',
+      ownId: () => 'beta-id',
       onMessage: async (msg) => {
         deliveries += 1;
         seen.push(msg);
@@ -351,6 +352,7 @@ describe('outbound frame → inbound path', () => {
     const pong = await requestPeer(addrB, { t: 'ping', from: 'alpha' });
     assert.equal(pong?.ok, true);
     assert.equal(pong?.name, 'beta');
+    assert.equal(pong?.id, 'beta-id');
     const refused = await requestPeer(addrB, { t: 'msg', from: 'alpha', body: 'far', hop: 99 });
     assert.equal(refused?.ok, false);
     assert.match(refused?.error ?? '', /limit is 4/);
@@ -414,7 +416,7 @@ describe('outbound frame → inbound path', () => {
       assert.deepEqual(await rawRequest(addrB, text), { ok: false, error }, text);
     }
     assert.equal(deliveries, before);
-    assert.deepEqual(await rawRequest(addrB, '{"t":"ping","from":"x"}'), { ok: true, name: 'beta' });
+    assert.deepEqual(await rawRequest(addrB, '{"t":"ping","from":"x"}'), { ok: true, name: 'beta', id: 'beta-id' });
   });
 
   describe('malformed replies', () => {

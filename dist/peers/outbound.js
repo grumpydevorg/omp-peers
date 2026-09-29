@@ -1,10 +1,12 @@
 /**
  * Outbound delivery — name→socket send. Never throws into the agent turn:
  * every failure (unknown name, refused relay, dead socket, timeout) resolves
- * to a human-readable text receipt. Dead sockets reap the stale presence
- * record on sight so the next `/peers` is accurate.
+ * to a human-readable text receipt. A frame carries the `instanceId` the
+ * name resolved to; a receiver with another id refuses it unread, and the
+ * send re-resolves once. A socket that closes without a reply hands the
+ * record to `reap`, which removes it only when its instance is confirmed dead.
  */
-import { MAX_HOPS, requestPeer } from './server.js';
+import { MAX_HOPS, requestPeer, WRONG_PEER } from './server.js';
 import { lookupPeer, peerKey } from './ids.js';
 /**
  * The hop an outbound send from `st` must carry.
@@ -39,11 +41,10 @@ export async function sendToPeer(to, message, deps) {
     if (deps.hop !== undefined && deps.hop > MAX_HOPS)
         return refusal(deps.hop);
     try {
-        const peers = await deps.listPeers();
-        const found = lookupPeer(name, peers);
+        const found = lookupPeer(name, await deps.listPeers());
         if (!found.found)
             return found.reason;
-        const record = found.record;
+        let record = found.record;
         const hop = deps.hop ??
             (deps.state !== undefined
                 ? outboundHop(deps.state, peerKey(record.sessionId, record.name), deps.isReply === true)
@@ -52,7 +53,7 @@ export async function sendToPeer(to, message, deps) {
         // chain never costs a socket round-trip.
         if (hop > MAX_HOPS)
             return refusal(hop);
-        const reply = await requestPeer(record.socket, {
+        const frame = {
             t: 'msg',
             from: deps.ownName,
             ...(deps.ownId !== undefined && deps.ownId !== '' ? { fromId: deps.ownId } : {}),
@@ -61,7 +62,25 @@ export async function sendToPeer(to, message, deps) {
             ...(deps.ack === true ? { ack: true } : {}),
             ...(deps.human === true ? { human: true } : {}),
             hop,
-        });
+        };
+        let reply;
+        for (let attempt = 0;; attempt += 1) {
+            reply = await requestPeer(record.socket, {
+                ...frame,
+                ...(record.instanceId !== undefined ? { toId: record.instanceId } : {}),
+            });
+            if (attempt > 0 || reply?.ok !== false || reply.error !== WRONG_PEER)
+                break;
+            // The name moved between listing and delivery: the refused frame reached
+            // nothing, so one retry against a fresh listing cannot deliver twice.
+            const again = lookupPeer(name, await deps.listPeers());
+            if (!again.found)
+                return again.reason;
+            if (again.record.instanceId === record.instanceId) {
+                return `Delivery to ${record.name} failed: its address belongs to another instance. Check \`/peers\`.`;
+            }
+            record = again.record;
+        }
         if (reply === undefined) {
             try {
                 await deps.reap?.(record);

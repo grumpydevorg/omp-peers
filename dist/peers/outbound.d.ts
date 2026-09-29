@@ -1,8 +1,10 @@
 /**
  * Outbound delivery — name→socket send. Never throws into the agent turn:
  * every failure (unknown name, refused relay, dead socket, timeout) resolves
- * to a human-readable text receipt. Dead sockets reap the stale presence
- * record on sight so the next `/peers` is accurate.
+ * to a human-readable text receipt. A frame carries the `instanceId` the
+ * name resolved to; a receiver with another id refuses it unread, and the
+ * send re-resolves once. A socket that closes without a reply hands the
+ * record to `reap`, which removes it only when its instance is confirmed dead.
  */
 import type { PeerRecord } from '../types.js';
 /**
