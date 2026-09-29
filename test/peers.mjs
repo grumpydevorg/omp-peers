@@ -110,6 +110,9 @@ describe('presence beat → roster lists both peers', () => {
     assert.match(note, /peer_send/);
     // Never a native `hub` path: peers are not in the host's agent registry.
     assert.doesNotMatch(note, /`hub`/);
+    // Live state stays out of the note, which must not change mid-turn and
+    // invalidate the provider's prompt cache (beta is busy here).
+    assert.doesNotMatch(note, /\((working|idle)\)/);
   });
 
   it('reaps dead pids and expired beats on sight', async () => {
@@ -1107,7 +1110,7 @@ describe('activity, todos, and request/reply tools', () => {
     assert.match(line, /1 todo/);
   });
 
-  it('shows activity, todo count, and tool hints in buildPeersNote', () => {
+  it('keeps activity and todos out of buildPeersNote but names the tools', () => {
     const t = Date.now();
     const peer = {
       v: 1, pid: 47666, name: 'todo-peer', cwd: '/w/td', project: 'td', harness: 'pi',
@@ -1115,8 +1118,8 @@ describe('activity, todos, and request/reply tools', () => {
       activity: 'fixing login', todos: [{ text: 'write tests' }],
     };
     const note = buildPeersNote('alpha', [peer]);
-    assert.match(note, /fixing login/);
-    assert.match(note, /1 todo/);
+    assert.doesNotMatch(note, /fixing login/);
+    assert.doesNotMatch(note, /1 todo/);
     assert.match(note, /peer_status/);
     assert.doesNotMatch(note, /peer_todo/);
     assert.match(note, /peer_request/);
