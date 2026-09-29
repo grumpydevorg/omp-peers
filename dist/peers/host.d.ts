@@ -29,8 +29,12 @@ export interface SelectOption {
 export interface UiLike {
     notify(message: string, type?: 'info' | 'warning' | 'error'): void;
     select?: (title: string, options: SelectOption[], dialogOptions?: unknown) => Promise<string | undefined>;
+    /** One-line text prompt (omp `ExtensionUIContext.input`); `undefined` on cancel. */
+    input?: (title: string, placeholder?: string, dialogOptions?: unknown) => Promise<string | undefined>;
     /** Live composer text in interactive mode (absent headless) — typing protection reads this. */
     getEditorText?: () => string;
+    /** Replace the composer text (omp `ExtensionUIContext.setEditorText`). */
+    setEditorText?: (text: string) => void;
     [key: string]: unknown;
 }
 export interface CommandContextLike {

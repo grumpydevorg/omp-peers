@@ -46,6 +46,8 @@ export interface InboundMessage {
   hop: number;
   /** PURE RECEIPT — NEVER WAKES THE RECEIVER; RENDERED AS ONE DIM TOAST. */
   ack?: boolean;
+  /** The sender's user typed every message in this batch (not its agent). */
+  human?: boolean;
 }
 
 export interface PeerServerOptions {
@@ -85,7 +87,7 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
   // batch even if the sender's name changes mid-burst.
   const pending = new Map<
     string,
-    { from: string; fromId?: string; bodies: string[]; replyTo?: string; hop: number; first: Socket }
+    { from: string; fromId?: string; bodies: string[]; replyTo?: string; hop: number; human: boolean; first: Socket }
   >();
   const sockets = new Set<Socket>();
   let stopped = false;
@@ -114,6 +116,7 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
         body,
         ...(batch.replyTo !== undefined ? { replyTo: batch.replyTo } : {}),
         hop: batch.hop,
+        ...(batch.human ? { human: true } : {}),
       });
       reply(first, { ok: true, outcome });
     } catch (err) {
@@ -190,6 +193,9 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
     if (known) {
       known.bodies.push(frame.body);
       known.hop = Math.max(known.hop, hop);
+      // One agent-written message makes the whole batch agent text: the
+      // label must never overstate who wrote it.
+      known.human = known.human && frame.human === true;
       reply(socket, { ok: true, outcome: 'coalesced' });
       return;
     }
@@ -199,6 +205,7 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
       bodies: [frame.body],
       ...(frame.replyTo !== undefined && frame.replyTo !== '' ? { replyTo: frame.replyTo } : {}),
       hop,
+      human: frame.human === true,
       first: socket,
     });
     contain(deliverBatch(key, socket), 'batch delivery');

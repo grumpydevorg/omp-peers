@@ -33,6 +33,8 @@ export interface InboundCarrier {
     replyTo?: string;
     /** PURE RECEIPT — DISPLAY-ONLY TOAST PATH, NEVER A WAKE. */
     ack?: boolean;
+    /** The sender's user typed this (`/msg`), not its agent. */
+    human?: boolean;
 }
 export interface CurrentHost {
     pi: ExtensionHostLike;
@@ -55,9 +57,15 @@ export interface InboundDeps {
     wakes?: Map<string, number[]>;
     now?: () => number;
 }
-/** Every injection carries the `[peer <name>]` prefix plus a peer-not-user line. */
+/**
+ * Every injection carries the `[peer <name>]` prefix (the hop reset in
+ * extension.ts keys on it) plus a line saying who wrote it. Text the peer's
+ * user typed is labelled as such, but it is still not THIS agent's user
+ * speaking: the sender's claim is unverifiable, so it carries no authority.
+ */
 export declare function formatPeerText(from: string, body: string, opts?: {
     replyTo?: string | undefined;
+    human?: boolean | undefined;
 }): string;
 /** True when `from` already consumed its hourly wake budget (prunes first). */
 export declare function isWakeOverBudget(wakes: Map<string, number[]>, from: string, now: number, max?: number): boolean;

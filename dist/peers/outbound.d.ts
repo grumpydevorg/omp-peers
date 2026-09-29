@@ -38,6 +38,8 @@ export interface OutboundDeps {
     replyTo?: string;
     /** PURE RECEIPT — RECEIVER SHOWS A TOAST, NEVER WAKES, NO REPLY EXPECTED. */
     ack?: boolean;
+    /** The user typed this (`/msg`, the `/peers` Message action), not the agent. */
+    human?: boolean;
     listPeers: () => Promise<PeerRecord[]>;
     reap?: (record: PeerRecord) => Promise<void> | void;
 }

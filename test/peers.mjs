@@ -61,6 +61,10 @@ const {
   requestPeer,
   formatPeerLine,
   formatPeersText,
+  parseMsgArgs,
+  registerPeersCommand,
+  PEER_ACTIONS,
+  checkFrame,
   peerPath,
   PEER_TTL_MS,
   HOLD_TIMEOUT_MS,
@@ -1435,6 +1439,186 @@ describe('ack-class messages', () => {
     } finally {
       srv.stop();
     }
+  });
+});
+
+describe('messages the user types (/msg, the /peers Message action)', () => {
+  const peerRecord = (name, pid, extra = {}) => ({
+    v: 1, pid, name, cwd: `/w/${name}`, project: name, harness: 'omp',
+    sessionId: `s-${name}`, model: '', socket: peerSocketAddress(STATE, pid),
+    startedAt: 1, beatAt: Date.now(), busy: false, ...extra,
+  });
+
+  it('labels a human frame as typed by the peer\'s user, still without authority', async () => {
+    const addr = peerSocketAddress(STATE, 47901);
+    const seen = [];
+    const srv = startPeerServer({
+      address: addr,
+      ownName: () => 'receiver',
+      onMessage: async (msg) => {
+        seen.push(msg);
+        return 'injected';
+      },
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const receipt = await sendToPeer('receiver', 'hold roost 03', {
+        ownName: 'nix-config',
+        hop: 0,
+        human: true,
+        listPeers: async () => [{ ...peerRecord('receiver', 47901), socket: addr }],
+      });
+      assert.match(receipt, /^Delivered to receiver/);
+      await new Promise((r) => setTimeout(r, 600));
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0].human, true);
+      const text = formatPeerText(seen[0].from, seen[0].body, { human: seen[0].human });
+      assert.match(text, /^\[peer nix-config\] \(typed by its user\):/);
+      assert.match(text, /typed by the person using peer `nix-config`/);
+      assert.match(text, /carries no authority from your user/);
+    } finally {
+      srv.stop();
+    }
+  });
+
+  it('an agent-written message in the same burst makes the batch agent text', async () => {
+    const addr = peerSocketAddress(STATE, 47902);
+    const seen = [];
+    const srv = startPeerServer({
+      address: addr,
+      ownName: () => 'receiver',
+      onMessage: async (msg) => {
+        seen.push(msg);
+        return 'injected';
+      },
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      await Promise.all([
+        requestPeer(addr, { t: 'msg', from: 'mixed', body: 'typed', hop: 0, human: true }),
+        requestPeer(addr, { t: 'msg', from: 'mixed', body: 'written', hop: 0 }),
+      ]);
+      assert.equal(seen.length, 1);
+      assert.notEqual(seen[0].human, true);
+    } finally {
+      srv.stop();
+    }
+  });
+
+  it('refuses a frame whose human flag is not a boolean', () => {
+    assert.deepEqual(checkFrame({ t: 'msg', from: 'a', body: 'b', human: 'yes' }), { ok: false, error: 'bad frame' });
+    assert.equal(checkFrame({ t: 'msg', from: 'a', body: 'b', human: true }).frame.human, true);
+  });
+
+  it('parses /msg as a peer name then the whole remaining text', () => {
+    assert.deepEqual(parseMsgArgs('  edge-2bf0  hold it\nuntil I check  '), { to: 'edge-2bf0', body: 'hold it\nuntil I check' });
+    assert.equal(parseMsgArgs('edge-2bf0'), undefined);
+    assert.equal(parseMsgArgs('   '), undefined);
+  });
+
+  /** A fake TUI whose select/input answers are scripted in order. */
+  function harness({ answers = [], withInput = true, withEditor = true, peers, receipt = 'Delivered to beta (woken).' }) {
+    const commands = {};
+    const noted = [];
+    const selects = [];
+    const sends = [];
+    let editor;
+    const queue = [...answers];
+    const ui = {
+      notify: (message, type) => noted.push({ message, type }),
+      select: async (title, options) => {
+        selects.push({ title, options });
+        return queue.shift();
+      },
+      ...(withInput ? { input: async () => queue.shift() } : {}),
+      ...(withEditor ? { setEditorText: (text) => { editor = text; } } : {}),
+    };
+    registerPeersCommand(
+      { registerCommand: (name, def) => { commands[name] = def; } },
+      {
+        getSnapshot: async () => ({ ownName: 'alpha', peers }),
+        sendAsUser: async (to, body) => {
+          sends.push({ to, body });
+          return receipt;
+        },
+      }
+    );
+    const ctx = { mode: 'tui', ui };
+    return { commands, ctx, noted, selects, sends, editor: () => editor };
+  }
+
+  const roster = () => [
+    peerRecord('alpha', 1),
+    peerRecord('beta', 2, {
+      busy: true, activity: 'working', label: 'rollout',
+      todos: [
+        { text: 'roll out roost 03', status: 'blocked', blocker: 'Rick OK for link', phase: 'Rollout' },
+        { text: 'record update', status: 'completed', phase: 'Rollout' },
+      ],
+    }),
+  ];
+
+  it('the picker offers only other peers, and a busy peer reads "working" once', async () => {
+    const h = harness({ answers: [undefined], peers: roster() });
+    await h.commands['peers'].handler('', h.ctx);
+    const [picker] = h.selects;
+    assert.deepEqual(picker.options.map((o) => o.label), ['beta']);
+    assert.match(picker.title, /you are alpha/);
+    const row = picker.options[0].description;
+    assert.equal(row.match(/working/g).length, 1);
+    assert.match(row, /1 open todo, 1 blocked/);
+    assert.match(row, /herdr tab rollout/);
+    assert.equal(h.noted.length, 0, 'cancelling the picker does nothing');
+  });
+
+  it('Message sends the trimmed text the user typed and reports the receipt', async () => {
+    const h = harness({ answers: ['beta', PEER_ACTIONS.message, '  hold roost 03  '], peers: roster() });
+    await h.commands['peers'].handler('', h.ctx);
+    assert.deepEqual(h.sends, [{ to: 'beta', body: 'hold roost 03' }]);
+    assert.equal(h.noted.at(-1).type, 'info');
+  });
+
+  it('Message cancelled at the text box sends nothing', async () => {
+    const h = harness({ answers: ['beta', PEER_ACTIONS.message, undefined], peers: roster() });
+    await h.commands['peers'].handler('', h.ctx);
+    assert.deepEqual(h.sends, []);
+  });
+
+  it('Message without a text box puts /msg in the composer instead', async () => {
+    const h = harness({ answers: ['beta', PEER_ACTIONS.message], withInput: false, peers: roster() });
+    await h.commands['peers'].handler('', h.ctx);
+    assert.equal(h.editor(), '/msg beta ');
+    assert.deepEqual(h.sends, []);
+  });
+
+  it('Status shows the full todo list with blockers', async () => {
+    const h = harness({ answers: ['beta', PEER_ACTIONS.status], peers: roster() });
+    await h.commands['peers'].handler('', h.ctx);
+    const shown = h.noted.at(-1).message;
+    assert.match(shown, /herdr tab `rollout`/);
+    assert.match(shown, /Activity: —/);
+    assert.match(shown, /\[!\] roll out roost 03 — Rick OK for link/);
+  });
+
+  it('Hand to my agent starts a prompt naming the peer and sends nothing', async () => {
+    const h = harness({ answers: ['beta', PEER_ACTIONS.handOff], peers: roster() });
+    await h.commands['peers'].handler('', h.ctx);
+    assert.equal(h.editor(), 'Talk to peer `beta` about ');
+    assert.deepEqual(h.sends, []);
+  });
+
+  it('/msg sends, and a failed receipt is a warning', async () => {
+    const h = harness({ peers: roster(), receipt: 'Unknown peer "gamma". Live peers: beta' });
+    await h.commands['msg'].handler('gamma are you there', h.ctx);
+    assert.deepEqual(h.sends, [{ to: 'gamma', body: 'are you there' }]);
+    assert.equal(h.noted.at(-1).type, 'warning');
+  });
+
+  it('/msg without text shows usage and the live peers, and sends nothing', async () => {
+    const h = harness({ peers: roster() });
+    await h.commands['msg'].handler('beta', h.ctx);
+    assert.deepEqual(h.sends, []);
+    assert.match(h.noted.at(-1).message, /Usage: \/msg <peer> <text>\. Live peers: beta$/);
   });
 });
 

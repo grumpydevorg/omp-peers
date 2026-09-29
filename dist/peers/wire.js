@@ -26,13 +26,14 @@ export function checkFrame(value) {
         return { ok: false, error: 'bad frame' };
     if (t === 'ping')
         return { ok: true, frame: { t: 'ping', from } };
-    const { fromId, body, replyTo, hop, ack } = value;
+    const { fromId, body, replyTo, hop, ack, human } = value;
     if (from === '' ||
         (fromId !== undefined && typeof fromId !== 'string') ||
         typeof body !== 'string' ||
         (replyTo !== undefined && typeof replyTo !== 'string') ||
         (hop !== undefined && typeof hop !== 'number') ||
-        (ack !== undefined && typeof ack !== 'boolean')) {
+        (ack !== undefined && typeof ack !== 'boolean') ||
+        (human !== undefined && typeof human !== 'boolean')) {
         return { ok: false, error: 'bad frame' };
     }
     return {
@@ -45,6 +46,7 @@ export function checkFrame(value) {
             ...(replyTo !== undefined ? { replyTo } : {}),
             ...(hop !== undefined ? { hop } : {}),
             ...(ack !== undefined ? { ack } : {}),
+            ...(human !== undefined ? { human } : {}),
         },
     };
 }

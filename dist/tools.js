@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { formatBeatAge } from './peers/presence.js';
 import { lookupPeer } from './peers/ids.js';
+import { formatPeerStatus } from './peers/status.js';
 export function registerPeerSendTool(pi, deps) {
     pi.registerTool({
         name: 'peer_send',
@@ -47,47 +48,6 @@ export function registerPeerSendTool(pi, deps) {
         },
     });
 }
-/** Checklist box for one native/legacy todo status. */
-function todoBox(status) {
-    switch (status) {
-        case 'completed':
-        case 'done':
-            return '[x]';
-        case 'in_progress':
-        case 'doing':
-            return '[~]';
-        case 'blocked':
-            return '[!]';
-        case 'abandoned':
-            return '[-]';
-        default:
-            return '[ ]';
-    }
-}
-function todoLine(todo) {
-    const blocker = todo.status === 'blocked' && todo.blocker ? ` — ${todo.blocker}` : '';
-    return `- ${todoBox(todo.status)} ${todo.text}${blocker}`;
-}
-/** Native phases render as headers; todos without one stay flat. */
-function renderTodos(todos) {
-    const lines = [`Todos (${todos.length}):`];
-    const groups = new Map();
-    for (const todo of todos) {
-        const phase = todo.phase ?? '';
-        const group = groups.get(phase);
-        if (group === undefined)
-            groups.set(phase, [todo]);
-        else
-            group.push(todo);
-    }
-    for (const [phase, group] of groups) {
-        if (phase !== '')
-            lines.push(`Phase: ${phase}`);
-        for (const todo of group)
-            lines.push(todoLine(todo));
-    }
-    return lines;
-}
 export function registerPeerStatusTool(pi, deps) {
     pi.registerTool({
         name: 'peer_status',
@@ -111,18 +71,7 @@ export function registerPeerStatusTool(pi, deps) {
                 if (!found.found)
                     return { content: [{ type: 'text', text: found.reason }] };
                 const peer = found.record;
-                const now = deps.now?.() ?? Date.now();
-                const lines = [
-                    `\`${peer.name}\` is ${peer.busy ? 'working' : 'idle'} in ${peer.cwd} · beat ${formatBeatAge(peer.beatAt, now)}.`,
-                    `Activity: ${peer.activity ?? '—'}`,
-                ];
-                if (peer.todos !== undefined && peer.todos.length > 0) {
-                    lines.push(...renderTodos(peer.todos));
-                }
-                else {
-                    lines.push('Todos: none');
-                }
-                return { content: [{ type: 'text', text: lines.join('\n') }] };
+                return { content: [{ type: 'text', text: formatPeerStatus(peer, deps.now?.() ?? Date.now()) }] };
             }
             catch (err) {
                 return { content: [{ type: 'text', text: `peer_status failed: ${err instanceof Error ? err.message : String(err)}` }] };

@@ -16,7 +16,8 @@ export { sendToPeer, outboundHop, type HopState, type OutboundDeps } from './pee
 export { buildPeersNote, appendNoteToMessages, type RosterMessage, } from './peers/roster.js';
 export { detectHarness, readTitleSource, readNativeTodos, MAX_PEER_TODOS, MAX_PEER_TODO_TEXT_CHARS, type CommandContextLike, type ExtensionHostLike, type UiLike, type SelectOption, } from './peers/host.js';
 export { checkFrame, checkReply, type FrameCheck, type FrameRejection } from './peers/wire.js';
-export { formatPeersText, formatPeerLine, type PeersSnapshot } from './commands/peers.js';
+export { formatPeerStatus, describePeer, peerActivity, todoSummary } from './peers/status.js';
+export { formatPeersText, formatPeerLine, parseMsgArgs, registerPeersCommand, PEER_ACTIONS, type PeersSnapshot, type PeerCommandDeps, } from './commands/peers.js';
 export { registerPeerSendTool, registerPeerStatusTool, registerPeerRequestTool, type PeerSendDeps, type PeerStatusDeps, type PeerRequestDeps, } from './tools.js';
 export * from './errors.js';
 export type { HarnessKind, PeerRecord, PeerTodo, PendingReply, PeerFrame, PeerReply, } from './types.js';

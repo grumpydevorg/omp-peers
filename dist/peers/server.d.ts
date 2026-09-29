@@ -33,6 +33,8 @@ export interface InboundMessage {
     hop: number;
     /** PURE RECEIPT — NEVER WAKES THE RECEIVER; RENDERED AS ONE DIM TOAST. */
     ack?: boolean;
+    /** The sender's user typed every message in this batch (not its agent). */
+    human?: boolean;
 }
 export interface PeerServerOptions {
     address: string;

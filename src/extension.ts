@@ -476,21 +476,6 @@ async function stopNode(st: NodeState): Promise<void> {
 }
 
 export default function peersExtension(pi: ExtensionHostLike): void {
-  registerPeersCommand(pi, async () => {
-    const st = liveNode();
-    if (st !== undefined) {
-      // Fresh beat before rendering: a just-run /rename must be visible
-      // immediately, not on the next 15s tick. tick() owns its failures.
-      try {
-        await tick(st);
-      } catch {
-        // Snapshot stays last-good.
-      }
-      return { ownName: st.name, peers: st.peers, held: st.held.length };
-    }
-    return { ownName: '', peers: [], held: 0 };
-  });
-
   // Sends resolve names from the presence directory at call time, not from
   // the heartbeat cache: a /rename reaches the directory at the renamer's next
   // beat, and a cached roster answers "Unknown peer" until the sender's own
@@ -501,6 +486,37 @@ export default function peersExtension(pi: ExtensionHostLike): void {
     if (st === undefined) return [];
     return (await listLivePeers(st.stateDir, st.pid)).filter((p) => p.pid !== st.pid);
   };
+
+  registerPeersCommand(pi, {
+    getSnapshot: async () => {
+      const st = liveNode();
+      if (st !== undefined) {
+        // Fresh beat before rendering: a just-run /rename must be visible
+        // immediately, not on the next 15s tick. tick() owns its failures.
+        try {
+          await tick(st);
+        } catch {
+          // Snapshot stays last-good.
+        }
+        return { ownName: st.name, peers: st.peers, held: st.held.length };
+      }
+      return { ownName: '', peers: [], held: 0 };
+    },
+    // Typed by the user, so it starts a fresh chain: hop 0, never a relay.
+    sendAsUser: (to, body) => {
+      const st = liveNode();
+      return sendToPeer(to, body, {
+        ownName: st?.name ?? '',
+        ...(st !== undefined ? { ownId: st.sessionId } : {}),
+        hop: 0,
+        human: true,
+        listPeers: freshPeers,
+        reap: (record) => {
+          if (st !== undefined) void removePeerRecord(st.stateDir, record.pid);
+        },
+      });
+    },
+  });
 
   registerPeerSendTool(pi, {
     send: (to, message, replyTo, ack) => {
