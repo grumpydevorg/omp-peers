@@ -20,7 +20,7 @@
  */
 import { registerPeersCommand } from './commands/peers.js';
 import { detectHarness, readNativeTodos, readTitleSource } from './peers/host.js';
-import { chooseBase, directoryBase, isValidPeerName, peerKey, resolvePeerName } from './peers/ids.js';
+import { chooseBase, directoryBase, isValidPeerName, nameRoster, peerKey } from './peers/ids.js';
 import { createEnvLookups } from './peers/context.js';
 import { deliverInboundPeerMessage, HOLD_POLL_MS, MAX_HELD_BATCHES } from './peers/inbound.js';
 import { sendToPeer } from './peers/outbound.js';
@@ -123,11 +123,13 @@ function hostRead(st, what, read, fallback) {
 /** How long a name this peer gave up keeps answering, as an alias. */
 const PREVIOUS_NAME_MS = 10 * 60_000;
 /**
- * This peer's name from its base and the live roster, recording the name it
- * replaces so senders mid-conversation still reach it for a while.
+ * This peer's name and the other records' names, derived from one set with
+ * this peer's current base. Records the name it replaces so senders
+ * mid-conversation still reach it for a while. Returns the others, named.
  */
 function assignName(st, base, others) {
-    const next = resolvePeerName({ base, sessionId: st.sessionId, pid: st.pid, peers: others });
+    const roster = nameRoster(others, { pid: st.pid, base, sessionId: st.sessionId });
+    const next = roster.self;
     // Only a name other peers could have learned is worth keeping: one held
     // briefly before the first beat was never seen.
     if (st.publishedName !== undefined && st.publishedName.toLowerCase() !== next.toLowerCase()) {
@@ -136,6 +138,7 @@ function assignName(st, base, others) {
     st.previousNames.delete(next);
     st.base = base;
     st.name = next;
+    return roster.others;
 }
 /** Tab label (when a usable name) plus names held in the last minutes. */
 function currentAliases(st) {
@@ -178,16 +181,16 @@ async function tick(st) {
     const rawLabel = st.lookups.tabLabel();
     st.label = rawLabel !== undefined && isValidPeerName(rawLabel) ? rawLabel : undefined;
     const base = currentBase(st, cwd);
-    let others;
+    let listed;
     try {
-        others = (await listLivePeers(st.stateDir, st.pid)).filter((p) => p.pid !== st.pid);
+        listed = await listLivePeers(st.stateDir, st.pid);
     }
     catch (err) {
         // Transient listing failure: fall back to the last-good roster below.
         logOf(st, `peers: listing peers failed: ${err instanceof Error ? err.message : String(err)}`);
-        others = undefined;
+        listed = undefined;
     }
-    assignName(st, base, others ?? st.peers.filter((p) => p.pid !== st.pid));
+    const others = assignName(st, base, listed ?? st.peers);
     st.nativeTodos = readNativeTodos(ctx?.sessionManager);
     const lastActivity = st.nativeActivity;
     const activity = lastActivity !== undefined && Date.now() - lastActivity.at <= ACTIVITY_FRESH_MS
@@ -219,11 +222,7 @@ async function tick(st) {
     catch (err) {
         logOf(st, `peers: heartbeat failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-    const lastOthers = st.peers.filter((p) => p.pid !== st.pid);
-    st.peers =
-        own !== undefined
-            ? [...(others ?? lastOthers), own].sort((a, b) => a.name.localeCompare(b.name))
-            : (others ?? lastOthers);
+    st.peers = own !== undefined ? [...others, own].sort((a, b) => a.name.localeCompare(b.name)) : others;
 }
 function armBeatTimer(st, ctx) {
     try {
@@ -435,7 +434,8 @@ export default function peersExtension(pi) {
         const st = liveNode();
         if (st === undefined)
             return [];
-        return (await listLivePeers(st.stateDir, st.pid)).filter((p) => p.pid !== st.pid);
+        return nameRoster(await listLivePeers(st.stateDir, st.pid), { pid: st.pid, base: st.base, sessionId: st.sessionId })
+            .others;
     };
     registerPeersCommand(pi, {
         getSnapshot: async () => {
@@ -614,9 +614,8 @@ export default function peersExtension(pi) {
         // building the note — the async re-beat may not have landed yet, and
         // the first prompt after /rename must not show a stale name.
         const cwd = typeof ctx?.cwd === 'string' && ctx.cwd !== '' ? ctx.cwd : process.cwd();
-        assignName(st, currentBase(st, cwd), st.peers.filter((p) => p.pid !== st.pid));
+        const others = assignName(st, currentBase(st, cwd), st.peers);
         // Always inject: the agent learns its OWN peer name here, even solo.
-        const others = st.peers.filter((p) => p.pid !== st.pid);
         const note = buildPeersNote(st.name, others);
         const payload = event;
         if (payload === undefined || !Array.isArray(payload.messages))

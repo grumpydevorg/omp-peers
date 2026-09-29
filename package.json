@@ -21,8 +21,8 @@
     "build": "tsc -p tsconfig.json",
     "lint": "biome check src test",
     "format": "biome check --write src test",
-    "test": "npm run build && npm run lint && node --test test/peers.mjs",
-    "smoke": "npm run build && node test/peers.mjs"
+    "test": "npm run build && npm run lint && node --test test/*.mjs",
+    "smoke": "npm run build && node --test test/*.mjs"
   },
   "omp": {
     "extensions": [
@@ -52,6 +52,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
     "@types/node": "^26.5.0",
+    "fast-check": "4.10.2",
     "typescript": "^7.0.2"
   }
 }

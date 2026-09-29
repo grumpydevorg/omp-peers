@@ -9,7 +9,7 @@
 export { resolveStateDir, ensureStateDirs, peersDir, peerPath, } from './store/paths.js';
 export { durableWriteJson, readJsonFile, } from './store/atomic.js';
 // Peer identity.
-export { PEER_NAME_PATTERN, isValidPeerName, validatePeerName, directoryBase, chooseBase, resolvePeerName, recordBase, peerKey, lookupPeer, } from './peers/ids.js';
+export { PEER_NAME_PATTERN, isValidPeerName, validatePeerName, directoryBase, chooseBase, SUFFIX_SEPARATOR, deriveNames, nameRoster, recordBase, peerKey, lookupPeer, } from './peers/ids.js';
 // Environment lookups (git top level, herdr tab label).
 export { createEnvLookups } from './peers/context.js';
 // Presence.

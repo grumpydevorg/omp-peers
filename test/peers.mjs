@@ -55,7 +55,8 @@ const {
   MAX_HOPS,
   validatePeerName,
   isValidPeerName,
-  resolvePeerName,
+  deriveNames,
+  nameRoster,
   peerSocketAddress,
   startPeerServer,
   requestPeer,
@@ -882,23 +883,30 @@ describe('peer identity: validation, base name, collision, lookup', () => {
   it('suffixes every sharer of a base with its own session tail, stable across restart', () => {
     const idA = '01a0e6f9-ee15-75b1-9cd1-1cf7d75e777d';
     const idB = '01a0e71a-b27a-73b1-9f0b-09c32e1ec580';
-    const a = rec({ pid: 100, name: 'supersensory', base: 'supersensory', sessionId: idA });
-    // B joins with the same base: both are suffixed, neither keeps the bare name.
-    assert.equal(resolvePeerName({ base: 'supersensory', sessionId: idB, pid: 200, peers: [a] }), 'supersensory-c580');
-    const b = rec({ pid: 200, name: 'supersensory-c580', base: 'supersensory', sessionId: idB });
-    assert.equal(resolvePeerName({ base: 'supersensory', sessionId: idA, pid: 100, peers: [b] }), 'supersensory-777d');
+    const names = (...sources) => Object.fromEntries(deriveNames(sources));
+    // Two sharers are both suffixed; neither keeps the bare name.
+    assert.deepEqual(
+      names({ pid: 100, base: 'supersensory', sessionId: idA }, { pid: 200, base: 'supersensory', sessionId: idB }),
+      { 100: 'supersensory#777d', 200: 'supersensory#c580' }
+    );
     // A restarts (--resume: new pid, same session id) and gets the same name.
-    assert.equal(resolvePeerName({ base: 'supersensory', sessionId: idA, pid: 300, peers: [b] }), 'supersensory-777d');
-    // Case-insensitive bases collide; a lone peer keeps the bare base.
-    assert.equal(resolvePeerName({ base: 'Supersensory', sessionId: idA, pid: 100, peers: [b] }), 'Supersensory-777d');
-    assert.equal(resolvePeerName({ base: 'solo', sessionId: idA, pid: 100, peers: [b] }), 'solo');
-    // An older record without `base` collides through its name.
-    const legacy = rec({ pid: 400, name: 'solo', sessionId: idB });
-    assert.equal(resolvePeerName({ base: 'solo', sessionId: idA, pid: 100, peers: [legacy] }), 'solo-777d');
-    // A 4-hex tie widens to 6; no session id falls back to the pid.
-    const tie = rec({ pid: 500, name: 'dup', base: 'dup', sessionId: 'aaaaaaaa-0000-0000-0000-00000012777d' });
-    assert.equal(resolvePeerName({ base: 'dup', sessionId: idA, pid: 100, peers: [tie] }), 'dup-5e777d');
-    assert.equal(resolvePeerName({ base: 'dup', sessionId: '', pid: 100, peers: [tie] }), 'dup-100');
+    assert.equal(
+      names(
+        { pid: 300, base: 'supersensory', sessionId: idA },
+        { pid: 200, base: 'supersensory', sessionId: idB }
+      )[300],
+      'supersensory#777d'
+    );
+    // A 4-hex tie widens the group to 6; a peer without a session id takes its pid.
+    const tie = { pid: 500, base: 'dup', sessionId: 'aaaaaaaa-0000-0000-0000-00000012777d' };
+    assert.deepEqual(names({ pid: 100, base: 'dup', sessionId: idA }, tie), { 100: 'dup#5e777d', 500: 'dup#12777d' });
+    assert.deepEqual(names({ pid: 100, base: 'dup', sessionId: '' }, tie), { 100: 'dup#_100', 500: 'dup#777d' });
+    // An older record without `base` collides through its name, which stays an alias.
+    const legacy = rec({ pid: 400, name: 'solo-c580', sessionId: idB });
+    const view = nameRoster([legacy], { pid: 100, base: 'solo-c580', sessionId: idA });
+    assert.equal(view.self, 'solo-c580#777d');
+    assert.equal(view.others[0].name, 'solo-c580#c580');
+    assert.deepEqual(view.others[0].aliases, ['solo-c580']);
   });
 
   it('looks peers up by name, unique alias or session id, case-insensitively', () => {
