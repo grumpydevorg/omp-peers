@@ -38,7 +38,7 @@ delete process.env.HERDR_PANE_ID;
 const {
   writePeerBeat,
   listLivePeers,
-  removePeerRecord,
+  removeOwnRecord,
   chooseBase,
   directoryBase,
   lookupPeer,
@@ -144,7 +144,7 @@ describe('presence beat → roster lists both peers', () => {
     assert.doesNotMatch(note, /\((working|idle)\)/);
   });
 
-  it('reaps dead pids and expired beats on sight', async () => {
+  it('reaps dead pids, and stale beats only once the socket disowns them', async () => {
     const live = await listLivePeers(STATE, 47111, { isAlive: ALIVE });
     assert.equal(live.length, 2);
     // Dead pid (liveness seam reports it gone) is unlinked.
@@ -157,7 +157,7 @@ describe('presence beat → roster lists both peers', () => {
       socket: peerSocketAddress(STATE, 2147483647),
       startedAt: 1,
     });
-    // Expired beat with a "live" pid is unlinked by TTL.
+    // Expired beat with a live pid: a stalled peer, not a dead one.
     const stalePath = peerPath(47999, STATE);
     await writeFile(
       stalePath,
@@ -176,11 +176,15 @@ describe('presence beat → roster lists both peers', () => {
         busy: false,
       })}\n`
     );
-    const after = await listLivePeers(STATE, 47111, {
-      isAlive: (pid) => pid !== 2147483647,
-    });
+    const isAlive = (pid) => pid !== 2147483647;
+    const stalled = await listLivePeers(STATE, 47111, { isAlive, probe: async () => 'unknown' });
     assert.deepEqual(
-      after.map((p) => p.name),
+      stalled.map((p) => p.name),
+      ['alpha', 'beta', 'stale']
+    );
+    const disowned = await listLivePeers(STATE, 47111, { isAlive, probe: async () => 'dead' });
+    assert.deepEqual(
+      disowned.map((p) => p.name),
       ['alpha', 'beta']
     );
   });
@@ -263,7 +267,7 @@ describe('presence beat → roster lists both peers', () => {
   });
 
   if (process.platform !== 'win32') {
-    it("keeps a stale-but-alive peer's socket file while delisting the record", async () => {
+    it("unlinks a disowned stale record but keeps a live pid's socket file", async () => {
       const dir = join(STATE, 'peers');
       await mkdir(dir, { recursive: true });
       const sock = peerSocketAddress(STATE, 49877);
@@ -285,9 +289,9 @@ describe('presence beat → roster lists both peers', () => {
           busy: false,
         })}\n`
       );
-      const live = await listLivePeers(STATE, 0, { isAlive: ALIVE });
+      const live = await listLivePeers(STATE, 0, { isAlive: ALIVE, probe: async () => 'dead' });
       assert.ok(!live.some((p) => p.name === 'stale-alive'));
-      // The pid is alive: unlinking its socket would strand it forever.
+      // The pid is alive (another process may own it now): its socket is not ours to unlink.
       await stat(sock);
     });
   }
@@ -1141,7 +1145,7 @@ describe('shutdown unlink', () => {
     });
     let live = await listLivePeers(STATE, 0, { isAlive: ALIVE });
     assert.ok(live.some((p) => p.name === 'tmp'));
-    await removePeerRecord(STATE, 47777);
+    await removeOwnRecord(STATE, 47777);
     live = await listLivePeers(STATE, 0, { isAlive: ALIVE });
     assert.ok(!live.some((p) => p.name === 'tmp'));
   });
@@ -1840,7 +1844,7 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
     } finally {
       handlers['session_shutdown']();
       target.stop();
-      await removePeerRecord(STATE, targetPid);
+      await removeOwnRecord(STATE, targetPid);
     }
   });
 

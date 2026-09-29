@@ -13,7 +13,7 @@ export { PEER_NAME_PATTERN, isValidPeerName, validatePeerName, directoryBase, ch
 // Environment lookups (git top level, herdr tab label).
 export { createEnvLookups } from './peers/context.js';
 // Presence.
-export { writePeerBeat, listLivePeers, removePeerRecord, startPresenceBeat, formatBeatAge, HEARTBEAT_MS, PEER_TTL_MS, } from './peers/presence.js';
+export { writePeerBeat, listLivePeers, reapPeer, removeOwnRecord, startPresenceBeat, formatBeatAge, HEARTBEAT_MS, PEER_TTL_MS, } from './peers/presence.js';
 // Transport.
 export { MAX_HOPS, COALESCE_MS, PEER_REQUEST_TIMEOUT_MS, SOCKET_IDLE_MS, MAX_FRAME_BYTES, peerSocketAddress, startPeerServer, requestPeer, } from './peers/server.js';
 // Delivery.
