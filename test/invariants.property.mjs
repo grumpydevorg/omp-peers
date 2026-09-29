@@ -2,6 +2,8 @@
  * Laws of the peer system's safety invariants, checked by fast-check.
  *
  * I1 — a message reaches only the instance it was resolved to.
+ * I2 — once a node is stopped, it writes nothing more (its beat loop is
+ *      single-flight and stop is final).
  * I3 — a presence file is deleted only by its owner, or once its instance
  *      is proven dead.
  */
@@ -13,8 +15,16 @@ import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import fc from 'fast-check';
 
-const { PEER_TTL_MS, listLivePeers, peerSocketAddress, reapPeer, requestPeer, sendToPeer, startPeerServer } =
-  await import('../dist/index.js');
+const {
+  PEER_TTL_MS,
+  createBeatLoop,
+  listLivePeers,
+  peerSocketAddress,
+  reapPeer,
+  requestPeer,
+  sendToPeer,
+  startPeerServer,
+} = await import('../dist/index.js');
 
 let STATE;
 before(async () => {
@@ -256,5 +266,67 @@ describe('I3: only the owner, or proof of death, deletes a presence file', () =>
     srv.stop();
     const leftovers = await readdir(join(STATE, 'peers'));
     assert.ok(!leftovers.includes(`${pid}.json`));
+  });
+});
+
+describe('I2: a stopped node writes nothing more', () => {
+  it('the beat loop is single-flight, loses no request, and stop is final — in every interleaving', async () => {
+    const command = fc.constantFrom('request', 'request', 'stop');
+    await fc.assert(
+      fc.asyncProperty(
+        fc.scheduler(),
+        fc.array(command, { minLength: 1, maxLength: 8 }),
+        fc.integer({ min: 0, max: 3 }),
+        async (s, commands, awaitsPerRun) => {
+          let clock = 0;
+          let active = 0;
+          let maxActive = 0;
+          let stopAt;
+          const runs = [];
+          const requests = [];
+          const activeAtStopSettle = [];
+          const loop = createBeatLoop(
+            async () => {
+              const run = { start: ++clock, end: undefined };
+              runs.push(run);
+              active += 1;
+              maxActive = Math.max(maxActive, active);
+              // A heartbeat awaits I/O (listing, writing) between its steps.
+              for (let i = 0; i < awaitsPerRun; i += 1) await s.schedule(Promise.resolve(i), 'job I/O');
+              active -= 1;
+              run.end = ++clock;
+            },
+            () => undefined
+          );
+          const issued = commands.map((c, i) =>
+            s.schedule(Promise.resolve(c), `command ${i}`).then(() => {
+              if (c === 'request') {
+                const r = { at: ++clock, settledAt: undefined };
+                requests.push(r);
+                return loop.request().then(() => {
+                  r.settledAt = ++clock;
+                });
+              }
+              stopAt ??= ++clock;
+              return loop.stop().then(() => {
+                activeAtStopSettle.push(active);
+              });
+            })
+          );
+          await s.waitFor(Promise.all(issued));
+
+          assert.ok(maxActive <= 1, `${maxActive} runs at once`);
+          for (const run of runs) assert.ok(stopAt === undefined || run.start < stopAt, 'a run started after stop');
+          for (const count of activeAtStopSettle) assert.equal(count, 0, 'stop settled with a run in flight');
+          for (const r of requests) {
+            assert.ok(r.settledAt !== undefined, 'a request never settled');
+            const served = runs.some((run) => run.start > r.at && run.end !== undefined && run.end < r.settledAt);
+            const released = stopAt !== undefined && r.settledAt > stopAt;
+            assert.ok(served || released, `request at ${r.at} settled at ${r.settledAt} without a fresh run`);
+          }
+        }
+      ),
+      { numRuns: 300 }
+    );
   });
 });

@@ -21,6 +21,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { registerPeersCommand } from './commands/peers.js';
+import { type BeatLoop, createBeatLoop } from './peers/beat.js';
 import type { CommandContextLike, ExtensionHostLike } from './peers/host.js';
 import { detectHarness, readNativeTodos, readTitleSource } from './peers/host.js';
 import { chooseBase, directoryBase, isValidPeerName, nameRoster, peerKey } from './peers/ids.js';
@@ -82,6 +83,8 @@ interface NodeState {
   current: { pi: ExtensionHostLike; ctx: CommandContextLike } | undefined;
   server: PeerServerHandle | undefined;
   stopBeat: (() => void) | undefined;
+  /** Every beat runs through this: one at a time, and none after shutdown began. */
+  beat: BeatLoop;
   stopped: boolean;
   /** Native host todo list, re-read from the session transcript on every tick. */
   nativeTodos: PeerTodo[];
@@ -301,7 +304,7 @@ function armBeatTimer(st: NodeState, ctx: CommandContextLike): void {
     typeof ctx.setInterval === 'function' && typeof ctx.clearTimer === 'function'
       ? { setInterval: ctx.setInterval.bind(ctx), clearTimer: ctx.clearTimer.bind(ctx) }
       : {};
-  st.stopBeat = startPresenceBeat(() => tick(st), {
+  st.stopBeat = startPresenceBeat(() => st.beat.request(), {
     intervalMs: HEARTBEAT_MS,
     onError: (err) => logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`),
     ...managed,
@@ -357,6 +360,10 @@ function ensureNode(pi: ExtensionHostLike, ctx: CommandContextLike): NodeState |
       current: { pi, ctx },
       server: undefined,
       stopBeat: undefined,
+      beat: createBeatLoop(
+        () => tick(st),
+        (err) => logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`)
+      ),
       lastRejectedSessionName: undefined,
       stopped: false,
       nativeTodos: [],
@@ -415,8 +422,8 @@ function ensureNode(pi: ExtensionHostLike, ctx: CommandContextLike): NodeState |
             if (live !== undefined) warnOf(live, text);
           },
         });
+        // The timer beats once immediately, then every HEARTBEAT_MS.
         armBeatTimer(st, ctx);
-        void tick(st);
       })
       .catch((err: unknown) => {
         try {
@@ -451,6 +458,9 @@ async function stopNode(st: NodeState): Promise<void> {
     // Shutdown never throws.
   }
   st.stopBeat = undefined;
+  // The beat in flight finishes before the record is unlinked below, and no
+  // beat starts after this: a stopped node is never written back.
+  await st.beat.stop();
   if (st.holdTimer !== undefined) {
     try {
       clearInterval(st.holdTimer);
@@ -500,12 +510,8 @@ export default function peersExtension(pi: ExtensionHostLike): void {
       const st = liveNode();
       if (st !== undefined) {
         // Fresh beat before rendering: a just-run /rename must be visible
-        // immediately, not on the next 15s tick. tick() owns its failures.
-        try {
-          await tick(st);
-        } catch {
-          // Snapshot stays last-good.
-        }
+        // immediately, not on the next 15s tick. The loop owns its failures.
+        await st.beat.request();
         return { ownName: st.name, peers: st.peers, held: st.held.length };
       }
       return { ownName: '', peers: [], held: 0 };
@@ -639,9 +645,7 @@ export default function peersExtension(pi: ExtensionHostLike): void {
       st.nativeActivity = undefined;
       // A todo flip must land before the next 15s beat, not after it.
       if ((event as { toolName?: unknown } | undefined)?.toolName === 'todo') {
-        void tick(st).catch((err: unknown) =>
-          logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`)
-        );
+        void st.beat.request();
       }
     }
   });
@@ -654,9 +658,7 @@ export default function peersExtension(pi: ExtensionHostLike): void {
   pi.on('todo_reminder', () => {
     const st = liveNode();
     if (st === undefined) return;
-    void tick(st).catch((err: unknown) =>
-      logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`)
-    );
+    void st.beat.request();
   });
   pi.on('context', (event, ctx) => {
     const st = ensureNode(pi, ctx);
