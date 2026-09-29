@@ -20,9 +20,7 @@ export function formatPeerLine(p, now, selfName) {
     const tab = p.label !== undefined ? ` (tab ${p.label})` : '';
     const doing = peerActivity(p);
     const activity = doing !== undefined ? ` · ${doing}` : '';
-    const todos = p.todos?.length
-        ? ` · ${p.todos.length} todo${p.todos.length === 1 ? '' : 's'}`
-        : '';
+    const todos = p.todos?.length ? ` · ${p.todos.length} todo${p.todos.length === 1 ? '' : 's'}` : '';
     return `${p.name}${tab} · ${p.harness}(${p.pid}) · ${p.cwd} · ${p.model === '' ? '—' : p.model} · ${p.busy ? 'working' : 'idle'} · beat ${formatBeatAge(p.beatAt, now)}${activity}${todos}${self}`;
 }
 export function formatPeersText(snap, now) {
@@ -74,7 +72,10 @@ export const PEER_ACTIONS = {
 async function runPeerAction(ctx, deps, peer, select) {
     const ui = ctx.ui;
     const action = await select.call(ui, `${peer.name} — ${describePeer(peer, Date.now())}`, [
-        { label: PEER_ACTIONS.message, description: 'Type a message; it goes straight to this peer, labelled as typed by you' },
+        {
+            label: PEER_ACTIONS.message,
+            description: 'Type a message; it goes straight to this peer, labelled as typed by you',
+        },
         { label: PEER_ACTIONS.status, description: 'What it is doing, and its whole todo list' },
         { label: PEER_ACTIONS.handOff, description: 'Start a prompt asking your agent to talk to it' },
     ]);
@@ -109,9 +110,7 @@ export function registerPeersCommand(pi, deps) {
             try {
                 const snap = await deps.getSnapshot();
                 const select = ctx.ui?.select;
-                const others = snap.peers
-                    .filter((p) => p.name !== snap.ownName)
-                    .sort((a, b) => a.name.localeCompare(b.name));
+                const others = snap.peers.filter((p) => p.name !== snap.ownName).sort((a, b) => a.name.localeCompare(b.name));
                 if (typeof select === 'function' && ctx.mode === 'tui' && others.length > 0) {
                     let picked;
                     try {

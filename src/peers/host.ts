@@ -32,11 +32,7 @@ export interface SelectOption {
 
 export interface UiLike {
   notify(message: string, type?: 'info' | 'warning' | 'error'): void;
-  select?: (
-    title: string,
-    options: SelectOption[],
-    dialogOptions?: unknown
-  ) => Promise<string | undefined>;
+  select?: (title: string, options: SelectOption[], dialogOptions?: unknown) => Promise<string | undefined>;
   /** One-line text prompt (omp `ExtensionUIContext.input`); `undefined` on cancel. */
   input?: (title: string, placeholder?: string, dialogOptions?: unknown) => Promise<string | undefined>;
   /** Live composer text in interactive mode (absent headless) — typing protection reads this. */
@@ -81,11 +77,7 @@ export interface ExtensionHostLike {
      * rather than as direct tools; `essential` keeps them callable by name.
      */
     loadMode?: 'essential' | 'discoverable';
-    execute: (
-      toolCallId: string,
-      params: Record<string, unknown>,
-      signal?: AbortSignal
-    ) => Promise<ToolInvokeResult>;
+    execute: (toolCallId: string, params: Record<string, unknown>, signal?: AbortSignal) => Promise<ToolInvokeResult>;
   }): void;
   sendUserMessage?: (
     content: string,

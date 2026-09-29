@@ -275,9 +275,7 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
       server?.listen(address);
     } catch (err) {
       try {
-        opts.onWarn?.(
-          `peers: failed to listen on ${address}: ${err instanceof Error ? err.message : String(err)}`
-        );
+        opts.onWarn?.(`peers: failed to listen on ${address}: ${err instanceof Error ? err.message : String(err)}`);
       } catch {
         // Warning delivery is best-effort.
       }

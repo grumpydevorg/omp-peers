@@ -102,18 +102,35 @@ function fakeCtx(sessionId, { idle = true } = {}) {
 describe('presence beat → roster lists both peers', () => {
   it('beats two fake peers and lists both live', async () => {
     await writePeerBeat({
-      stateDir: STATE, pid: 47111, name: 'alpha', cwd: join(STATE, 'a'),
-      harness: 'omp', sessionId: 'sess-a', model: 'm1',
-      socket: peerSocketAddress(STATE, 47111), startedAt: 1000, busy: false,
+      stateDir: STATE,
+      pid: 47111,
+      name: 'alpha',
+      cwd: join(STATE, 'a'),
+      harness: 'omp',
+      sessionId: 'sess-a',
+      model: 'm1',
+      socket: peerSocketAddress(STATE, 47111),
+      startedAt: 1000,
+      busy: false,
     });
     await writePeerBeat({
-      stateDir: STATE, pid: 47222, name: 'beta', cwd: join(STATE, 'b'),
-      harness: 'pi', sessionId: 'sess-b', model: 'm2',
-      socket: peerSocketAddress(STATE, 47222), startedAt: 2000, busy: true,
+      stateDir: STATE,
+      pid: 47222,
+      name: 'beta',
+      cwd: join(STATE, 'b'),
+      harness: 'pi',
+      sessionId: 'sess-b',
+      model: 'm2',
+      socket: peerSocketAddress(STATE, 47222),
+      startedAt: 2000,
+      busy: true,
     });
     const live = await listLivePeers(STATE, 47111, { isAlive: ALIVE });
     assert.equal(live.length, 2);
-    assert.deepEqual(live.map((p) => p.name), ['alpha', 'beta']);
+    assert.deepEqual(
+      live.map((p) => p.name),
+      ['alpha', 'beta']
+    );
     const note = buildPeersNote('alpha', live);
     assert.match(note, /`alpha`/);
     assert.match(note, /`beta`/);
@@ -130,23 +147,40 @@ describe('presence beat → roster lists both peers', () => {
     assert.equal(live.length, 2);
     // Dead pid (liveness seam reports it gone) is unlinked.
     await writePeerBeat({
-      stateDir: STATE, pid: 2147483647, name: 'ghost', cwd: join(STATE, 'g'),
-      harness: 'pi', socket: peerSocketAddress(STATE, 2147483647), startedAt: 1,
+      stateDir: STATE,
+      pid: 2147483647,
+      name: 'ghost',
+      cwd: join(STATE, 'g'),
+      harness: 'pi',
+      socket: peerSocketAddress(STATE, 2147483647),
+      startedAt: 1,
     });
     // Expired beat with a "live" pid is unlinked by TTL.
     const stalePath = peerPath(47999, STATE);
     await writeFile(
       stalePath,
-      JSON.stringify({
-        v: 1, pid: 47999, name: 'stale', cwd: join(STATE, 's'), project: 's',
-        harness: 'omp', sessionId: '', model: '', socket: peerSocketAddress(STATE, 47999),
-        startedAt: 1, beatAt: Date.now() - PEER_TTL_MS - 1000, busy: false,
-      }) + '\n'
+      `${JSON.stringify({
+        v: 1,
+        pid: 47999,
+        name: 'stale',
+        cwd: join(STATE, 's'),
+        project: 's',
+        harness: 'omp',
+        sessionId: '',
+        model: '',
+        socket: peerSocketAddress(STATE, 47999),
+        startedAt: 1,
+        beatAt: Date.now() - PEER_TTL_MS - 1000,
+        busy: false,
+      })}\n`
     );
     const after = await listLivePeers(STATE, 47111, {
       isAlive: (pid) => pid !== 2147483647,
     });
-    assert.deepEqual(after.map((p) => p.name), ['alpha', 'beta']);
+    assert.deepEqual(
+      after.map((p) => p.name),
+      ['alpha', 'beta']
+    );
   });
 
   it('compacts the roster note when no peers are live', () => {
@@ -163,8 +197,18 @@ describe('presence beat → roster lists both peers', () => {
         ownName: 'alpha',
         peers: [
           {
-            v: 1, pid: 47111, name: 'alpha', cwd: '/w/a', project: 'a', harness: 'omp',
-            sessionId: 's', model: 'm1', socket: 'x', startedAt: 1, beatAt: now - 3000, busy: true,
+            v: 1,
+            pid: 47111,
+            name: 'alpha',
+            cwd: '/w/a',
+            project: 'a',
+            harness: 'omp',
+            sessionId: 's',
+            model: 'm1',
+            socket: 'x',
+            startedAt: 1,
+            beatAt: now - 3000,
+            busy: true,
           },
         ],
       },
@@ -198,11 +242,17 @@ describe('presence beat → roster lists both peers', () => {
     const file = peerPath(49876, STATE);
     await writeFile(
       file,
-      JSON.stringify({
-        v: 2, pid: 49876, name: 'future', cwd: join(STATE, 'f'),
-        harness: 'omp', socket: peerSocketAddress(STATE, 49876),
-        startedAt: 1, beatAt: Date.now(), busy: false,
-      }) + '\n'
+      `${JSON.stringify({
+        v: 2,
+        pid: 49876,
+        name: 'future',
+        cwd: join(STATE, 'f'),
+        harness: 'omp',
+        socket: peerSocketAddress(STATE, 49876),
+        startedAt: 1,
+        beatAt: Date.now(),
+        busy: false,
+      })}\n`
     );
     const live = await listLivePeers(STATE, 0, { isAlive: ALIVE });
     assert.ok(!live.some((p) => p.name === 'future'));
@@ -211,18 +261,27 @@ describe('presence beat → roster lists both peers', () => {
   });
 
   if (process.platform !== 'win32') {
-    it('keeps a stale-but-alive peer\'s socket file while delisting the record', async () => {
+    it("keeps a stale-but-alive peer's socket file while delisting the record", async () => {
       const dir = join(STATE, 'peers');
       await mkdir(dir, { recursive: true });
       const sock = peerSocketAddress(STATE, 49877);
       await writeFile(sock, '');
       await writeFile(
         peerPath(49877, STATE),
-        JSON.stringify({
-          v: 1, pid: 49877, name: 'stale-alive', cwd: join(STATE, 'sa'), project: 'sa',
-          harness: 'omp', sessionId: '', model: '', socket: sock,
-          startedAt: 1, beatAt: Date.now() - PEER_TTL_MS - 1000, busy: false,
-        }) + '\n'
+        `${JSON.stringify({
+          v: 1,
+          pid: 49877,
+          name: 'stale-alive',
+          cwd: join(STATE, 'sa'),
+          project: 'sa',
+          harness: 'omp',
+          sessionId: '',
+          model: '',
+          socket: sock,
+          startedAt: 1,
+          beatAt: Date.now() - PEER_TTL_MS - 1000,
+          busy: false,
+        })}\n`
       );
       const live = await listLivePeers(STATE, 0, { isAlive: ALIVE });
       assert.ok(!live.some((p) => p.name === 'stale-alive'));
@@ -234,7 +293,7 @@ describe('presence beat → roster lists both peers', () => {
 
 describe('outbound frame → inbound path', () => {
   const addrB = peerSocketAddress(STATE, 47333);
-  let seen = [];
+  const seen = [];
   let deliveries = 0;
   let server;
   before(async () => {
@@ -253,8 +312,18 @@ describe('outbound frame → inbound path', () => {
 
   it('delivers a socket frame with a text receipt', async () => {
     const recordB = {
-      v: 1, pid: 47333, name: 'beta', cwd: '/w/b', project: 'b', harness: 'pi',
-      sessionId: '', model: '', socket: addrB, startedAt: 1, beatAt: Date.now(), busy: false,
+      v: 1,
+      pid: 47333,
+      name: 'beta',
+      cwd: '/w/b',
+      project: 'b',
+      harness: 'pi',
+      sessionId: '',
+      model: '',
+      socket: addrB,
+      startedAt: 1,
+      beatAt: Date.now(),
+      busy: false,
     };
     const receipt = await sendToPeer('beta', 'hello from alpha', {
       ownName: 'alpha',
@@ -390,8 +459,18 @@ describe('outbound frame → inbound path', () => {
     await new Promise((r) => setTimeout(r, 500));
     try {
       const recordC = {
-        v: 1, pid: 47444, name: 'gamma', cwd: '/w/c', project: 'c', harness: 'omp',
-        sessionId: '', model: '', socket: addrC, startedAt: 1, beatAt: Date.now(), busy: false,
+        v: 1,
+        pid: 47444,
+        name: 'gamma',
+        cwd: '/w/c',
+        project: 'c',
+        harness: 'omp',
+        sessionId: '',
+        model: '',
+        socket: addrC,
+        startedAt: 1,
+        beatAt: Date.now(),
+        busy: false,
       };
       const receipt = await sendToPeer('gamma', 'knock knock', {
         ownName: 'alpha',
@@ -461,9 +540,18 @@ describe('outbound frame → inbound path', () => {
 
   it('refuses an over-hop send locally, before any socket I/O', async () => {
     const record = {
-      v: 1, pid: 47998, name: 'ghost', cwd: '/w/g', project: 'g', harness: 'pi',
-      sessionId: '', model: '', socket: peerSocketAddress(STATE, 47998),
-      startedAt: 1, beatAt: Date.now(), busy: false,
+      v: 1,
+      pid: 47998,
+      name: 'ghost',
+      cwd: '/w/g',
+      project: 'g',
+      harness: 'pi',
+      sessionId: '',
+      model: '',
+      socket: peerSocketAddress(STATE, 47998),
+      startedAt: 1,
+      beatAt: Date.now(),
+      busy: false,
     };
     const receipt = await sendToPeer('ghost', 'hi', {
       ownName: 'alpha',
@@ -485,8 +573,18 @@ describe('outbound frame → inbound path', () => {
     await new Promise((r) => setTimeout(r, 500));
     try {
       const record = {
-        v: 1, pid: 47557, name: 'dropper', cwd: '/w/d', project: 'd', harness: 'pi',
-        sessionId: '', model: '', socket: addr, startedAt: 1, beatAt: Date.now(), busy: false,
+        v: 1,
+        pid: 47557,
+        name: 'dropper',
+        cwd: '/w/d',
+        project: 'd',
+        harness: 'pi',
+        sessionId: '',
+        model: '',
+        socket: addr,
+        startedAt: 1,
+        beatAt: Date.now(),
+        busy: false,
       };
       const receipt = await sendToPeer('dropper', 'hi', {
         ownName: 'alpha',
@@ -521,10 +619,7 @@ describe('outbound frame → inbound path', () => {
         socket.once('connect', resolve);
         socket.once('error', reject);
       });
-      const frame = Buffer.from(
-        JSON.stringify({ t: 'msg', from: 'uni', body: 'em—dash', hop: 0 }) + '\n',
-        'utf8'
-      );
+      const frame = Buffer.from(`${JSON.stringify({ t: 'msg', from: 'uni', body: 'em—dash', hop: 0 })}\n`, 'utf8');
       // '—' is E2 80 94; cut inside the sequence so no chunk boundary aligns.
       const cut = frame.indexOf(0xe2) + 1;
       socket.write(frame.subarray(0, cut));
@@ -584,7 +679,8 @@ describe('inbound delivery against a fake host', () => {
     assert.equal((await deliverInboundPeerMessage({ from: '', body: 'hi' }, deps)).outcome, 'dropped');
     assert.equal((await deliverInboundPeerMessage({ from: 'alpha', body: '' }, deps)).outcome, 'dropped');
     assert.equal(
-      (await deliverInboundPeerMessage({ from: 'alpha', body: 'hi' }, { ...deps, getCurrent: () => undefined })).outcome,
+      (await deliverInboundPeerMessage({ from: 'alpha', body: 'hi' }, { ...deps, getCurrent: () => undefined }))
+        .outcome,
       'dropped'
     );
     assert.equal(cur.sent.length, 0);
@@ -727,8 +823,19 @@ describe('inbound delivery against a fake host', () => {
 
 describe('peer identity: validation, base name, collision, lookup', () => {
   const rec = (over) => ({
-    v: 1, pid: 1, name: 'x', cwd: '/', project: 'x', harness: 'omp', sessionId: '',
-    model: '', socket: '', startedAt: 1, beatAt: 1, busy: false, ...over,
+    v: 1,
+    pid: 1,
+    name: 'x',
+    cwd: '/',
+    project: 'x',
+    harness: 'omp',
+    sessionId: '',
+    model: '',
+    socket: '',
+    startedAt: 1,
+    beatAt: 1,
+    busy: false,
+    ...over,
   });
 
   it('accepts valid names and rejects the rest', () => {
@@ -795,8 +902,20 @@ describe('peer identity: validation, base name, collision, lookup', () => {
 
   it('looks peers up by name, unique alias or session id, case-insensitively', () => {
     const peers = [
-      rec({ pid: 1, name: 'rick--lake-register', label: 'Starlinks', aliases: ['Starlinks'], sessionId: '01a0e7aa-1111-7000-8000-000000000001' }),
-      rec({ pid: 2, name: 'rick--starling-edr', label: 'starlings', aliases: ['starlings', 'old-name'], sessionId: '01a0e7bb-2222-7000-8000-000000000002' }),
+      rec({
+        pid: 1,
+        name: 'rick--lake-register',
+        label: 'Starlinks',
+        aliases: ['Starlinks'],
+        sessionId: '01a0e7aa-1111-7000-8000-000000000001',
+      }),
+      rec({
+        pid: 2,
+        name: 'rick--starling-edr',
+        label: 'starlings',
+        aliases: ['starlings', 'old-name'],
+        sessionId: '01a0e7bb-2222-7000-8000-000000000002',
+      }),
       rec({ pid: 3, name: 'rollout-a', aliases: ['rollout'] }),
       rec({ pid: 4, name: 'rollout-b', aliases: ['rollout'] }),
     ];
@@ -847,7 +966,9 @@ describe('environment lookups never block and stay cached', () => {
     const errors = [];
     const lookups = createEnvLookups({
       env: { HERDR_ENV: '1', HERDR_PANE_ID: 'wP:p1' },
-      run: async () => { throw new Error('timed out'); },
+      run: async () => {
+        throw new Error('timed out');
+      },
       onError: (text) => errors.push(text),
     });
     await lookups.prime('/tmp/nowhere');
@@ -867,7 +988,9 @@ describe('peer name follows the host session name (tick level)', () => {
   const fakePi = {
     registerCommand: () => {},
     registerTool: () => {},
-    on: (event, handler) => { handlers[event] = handler; },
+    on: (event, handler) => {
+      handlers[event] = handler;
+    },
     logger: { warn: (message) => logged.push(message), info: () => {}, error: () => {} },
     getSessionName: () => sessionName,
   };
@@ -916,7 +1039,10 @@ describe('peer name follows the host session name (tick level)', () => {
     for (let i = 0; i < 100 && !logged.some((m) => m.includes('Add deepseek-harness retro checks')); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    assert.ok(logged.some((m) => m.includes('Add deepseek-harness retro checks')), 'second rejection logs instead of popping up');
+    assert.ok(
+      logged.some((m) => m.includes('Add deepseek-harness retro checks')),
+      'second rejection logs instead of popping up'
+    );
     assert.equal(noted.length, 1, 'no second popup for a new auto-title; later ones log only');
 
     // A subagent's events reach the same extension instance. They must not
@@ -944,7 +1070,11 @@ describe('peer_send registration is mode-independent', () => {
   function fakePi(sendImpl) {
     const tools = {};
     return {
-      pi: { registerTool: (def) => { tools[def.name] = def; } },
+      pi: {
+        registerTool: (def) => {
+          tools[def.name] = def;
+        },
+      },
       tools,
       sendImpl,
     };
@@ -961,14 +1091,26 @@ describe('peer_send registration is mode-independent', () => {
   it('execute delegates to send and surfaces failures as text', async () => {
     const { tools } = fakePi(async () => 'ok');
     registerPeerSendTool(
-      { registerTool: (def) => { tools[def.name] = def; } },
+      {
+        registerTool: (def) => {
+          tools[def.name] = def;
+        },
+      },
       { send: async (to, message, replyTo) => `sent:${to}:${message}:${replyTo ?? '-'}` }
     );
     const ok = await tools['peer_send'].execute('id-1', { to: 'beta', message: 'hi' });
     assert.match(ok.content[0].text, /^sent:beta:hi:-$/);
     registerPeerSendTool(
-      { registerTool: (def) => { tools[def.name] = def; } },
-      { send: async () => { throw new Error('no route'); } }
+      {
+        registerTool: (def) => {
+          tools[def.name] = def;
+        },
+      },
+      {
+        send: async () => {
+          throw new Error('no route');
+        },
+      }
     );
     const failed = await tools['peer_send'].execute('id-2', { to: 'beta', message: 'hi' });
     assert.match(failed.content[0].text, /peer_send failed: no route/);
@@ -978,8 +1120,13 @@ describe('peer_send registration is mode-independent', () => {
 describe('shutdown unlink', () => {
   it('removes the own presence record', async () => {
     await writePeerBeat({
-      stateDir: STATE, pid: 47777, name: 'tmp', cwd: join(STATE, 't'),
-      harness: 'pi', socket: peerSocketAddress(STATE, 47777), startedAt: 1,
+      stateDir: STATE,
+      pid: 47777,
+      name: 'tmp',
+      cwd: join(STATE, 't'),
+      harness: 'pi',
+      socket: peerSocketAddress(STATE, 47777),
+      startedAt: 1,
     });
     let live = await listLivePeers(STATE, 0, { isAlive: ALIVE });
     assert.ok(live.some((p) => p.name === 'tmp'));
@@ -988,7 +1135,6 @@ describe('shutdown unlink', () => {
     assert.ok(!live.some((p) => p.name === 'tmp'));
   });
 });
-
 
 describe('conversation-aware hop accounting', () => {
   it('keeps an orchestrator<->same-peer conversation at hop 0 across round trips', () => {
@@ -1014,9 +1160,7 @@ describe('conversation-aware hop accounting', () => {
 
   it('advances one hop per relay and refuses past the cap', async () => {
     const names = ['A', 'B', 'C', 'D', 'E', 'F'];
-    const states = new Map(
-      names.map((name) => [name, { lastInboundPeer: undefined, lastInboundHop: 0 }])
-    );
+    const states = new Map(names.map((name) => [name, { lastInboundPeer: undefined, lastInboundHop: 0 }]));
     const hops = [];
     for (let i = 0; i < names.length - 1; i += 1) {
       const hop = outboundHop(states.get(names[i]), names[i + 1], false);
@@ -1058,12 +1202,25 @@ describe('conversation-aware hop accounting', () => {
     await new Promise((r) => setTimeout(r, 500));
     try {
       const record = {
-        v: 1, pid: 47667, name: 'convo-renamed', cwd: '/w/c', project: 'c', harness: 'omp',
-        sessionId: 'sid-convo', model: '', socket: addr, startedAt: 1, beatAt: Date.now(), busy: false,
+        v: 1,
+        pid: 47667,
+        name: 'convo-renamed',
+        cwd: '/w/c',
+        project: 'c',
+        harness: 'omp',
+        sessionId: 'sid-convo',
+        model: '',
+        socket: addr,
+        startedAt: 1,
+        beatAt: Date.now(),
+        busy: false,
       };
       const state = { lastInboundPeer: 'sid-convo', lastInboundHop: 4 };
       const receipt = await sendToPeer('convo-renamed', 'still here?', {
-        ownName: 'alpha', ownId: 'sid-alpha', state, listPeers: async () => [record],
+        ownName: 'alpha',
+        ownId: 'sid-alpha',
+        state,
+        listPeers: async () => [record],
       });
       assert.match(receipt, /^Delivered to convo-renamed/);
     } finally {
@@ -1085,8 +1242,18 @@ describe('conversation-aware hop accounting', () => {
     await new Promise((r) => setTimeout(r, 500));
     try {
       const record = {
-        v: 1, pid: 47666, name: 'convo', cwd: '/w/c2', project: 'c2', harness: 'omp',
-        sessionId: '', model: '', socket: addr, startedAt: 1, beatAt: Date.now(), busy: false,
+        v: 1,
+        pid: 47666,
+        name: 'convo',
+        cwd: '/w/c2',
+        project: 'c2',
+        harness: 'omp',
+        sessionId: '',
+        model: '',
+        socket: addr,
+        startedAt: 1,
+        beatAt: Date.now(),
+        busy: false,
       };
       // This node's last real inbound delivery was hop 4 from `convo`. Under
       // the old single-counter rule the send derived 5 and was refused; the
@@ -1151,8 +1318,14 @@ describe('native todo mapping (readNativeTodos)', () => {
 
   it('ignores non-todo and failed toolResults', () => {
     const ignored = [
-      { type: 'message', message: { role: 'toolResult', toolName: 'bash', isError: false, details: { phases: PHASES } } },
-      { type: 'message', message: { role: 'toolResult', toolName: 'todo', isError: true, details: { phases: PHASES } } },
+      {
+        type: 'message',
+        message: { role: 'toolResult', toolName: 'bash', isError: false, details: { phases: PHASES } },
+      },
+      {
+        type: 'message',
+        message: { role: 'toolResult', toolName: 'todo', isError: true, details: { phases: PHASES } },
+      },
       { type: 'message', message: { role: 'assistant', content: 'thinking' } },
       { type: 'message', message: { role: 'toolResult', toolName: 'todo', isError: false, details: {} } },
       { type: 'custom', customType: 'some_other_edit', data: { phases: PHASES } },
@@ -1164,7 +1337,14 @@ describe('native todo mapping (readNativeTodos)', () => {
     assert.deepEqual(readNativeTodos(undefined), []);
     assert.deepEqual(readNativeTodos({}), []);
     assert.deepEqual(readNativeTodos({ getBranch: () => 'not an array' }), []);
-    assert.deepEqual(readNativeTodos({ getBranch: () => { throw new Error('boom'); } }), []);
+    assert.deepEqual(
+      readNativeTodos({
+        getBranch: () => {
+          throw new Error('boom');
+        },
+      }),
+      []
+    );
     // getEntries is the fallback when getBranch is absent.
     assert.equal(readNativeTodos({ getEntries: () => [edit(PHASES)] }).length, 4);
   });
@@ -1200,9 +1380,16 @@ describe('activity, todos, and request/reply tools', () => {
 
   it('round-trips activity and todos through writePeerBeat and listLivePeers', async () => {
     await writePeerBeat({
-      stateDir: STATE, pid: 47666, name: 'todo-peer', cwd: join(STATE, 'td'),
-      harness: 'pi', socket: peerSocketAddress(STATE, 47666), startedAt: 1, busy: false,
-      activity: 'fixing login', todos: [{ id: '1', text: 'write tests', status: 'doing' }],
+      stateDir: STATE,
+      pid: 47666,
+      name: 'todo-peer',
+      cwd: join(STATE, 'td'),
+      harness: 'pi',
+      socket: peerSocketAddress(STATE, 47666),
+      startedAt: 1,
+      busy: false,
+      activity: 'fixing login',
+      todos: [{ id: '1', text: 'write tests', status: 'doing' }],
     });
     const live = await listLivePeers(STATE, 0, { isAlive: ALIVE, now: now() });
     const p = live.find((x) => x.name === 'todo-peer');
@@ -1216,9 +1403,20 @@ describe('activity, todos, and request/reply tools', () => {
   it('shows activity and todo count in formatPeerLine', () => {
     const t = Date.now();
     const rec = {
-      v: 1, pid: 47666, name: 'todo-peer', cwd: '/w/td', project: 'td', harness: 'pi',
-      sessionId: '', model: '', socket: '', startedAt: 1, beatAt: t, busy: false,
-      activity: 'fixing login', todos: [{ text: 'write tests' }],
+      v: 1,
+      pid: 47666,
+      name: 'todo-peer',
+      cwd: '/w/td',
+      project: 'td',
+      harness: 'pi',
+      sessionId: '',
+      model: '',
+      socket: '',
+      startedAt: 1,
+      beatAt: t,
+      busy: false,
+      activity: 'fixing login',
+      todos: [{ text: 'write tests' }],
     };
     const line = formatPeerLine(rec, t, 'alpha');
     assert.match(line, /fixing login/);
@@ -1228,9 +1426,20 @@ describe('activity, todos, and request/reply tools', () => {
   it('keeps activity and todos out of buildPeersNote but names the tools', () => {
     const t = Date.now();
     const peer = {
-      v: 1, pid: 47666, name: 'todo-peer', cwd: '/w/td', project: 'td', harness: 'pi',
-      sessionId: '', model: '', socket: '', startedAt: 1, beatAt: t, busy: false,
-      activity: 'fixing login', todos: [{ text: 'write tests' }],
+      v: 1,
+      pid: 47666,
+      name: 'todo-peer',
+      cwd: '/w/td',
+      project: 'td',
+      harness: 'pi',
+      sessionId: '',
+      model: '',
+      socket: '',
+      startedAt: 1,
+      beatAt: t,
+      busy: false,
+      activity: 'fixing login',
+      todos: [{ text: 'write tests' }],
     };
     const note = buildPeersNote('alpha', [peer]);
     assert.doesNotMatch(note, /fixing login/);
@@ -1242,19 +1451,38 @@ describe('activity, todos, and request/reply tools', () => {
 
   it('peer_status renders native phases with a box per status', async () => {
     const tools = {};
-    const peers = [{
-      v: 1, pid: 47666, name: 'todo-peer', cwd: '/w/td', project: 'td', harness: 'pi',
-      sessionId: '', model: '', socket: '', startedAt: 1, beatAt: Date.now(), busy: true,
-      activity: 'running tests',
-      todos: [
-        { phase: 'Auth', text: 'write tests', status: 'in_progress' },
-        { phase: 'Auth', text: 'ship fix', status: 'pending' },
-        { phase: 'Auth', text: 'rotate key', status: 'blocked', blocker: 'waiting on ops' },
-        { phase: 'Docs', text: 'update readme', status: 'completed' },
-        { phase: 'Docs', text: 'drop draft', status: 'abandoned' },
-      ],
-    }];
-    registerPeerStatusTool({ registerTool: (def) => { tools[def.name] = def; } }, { listPeers: async () => peers, now });
+    const peers = [
+      {
+        v: 1,
+        pid: 47666,
+        name: 'todo-peer',
+        cwd: '/w/td',
+        project: 'td',
+        harness: 'pi',
+        sessionId: '',
+        model: '',
+        socket: '',
+        startedAt: 1,
+        beatAt: Date.now(),
+        busy: true,
+        activity: 'running tests',
+        todos: [
+          { phase: 'Auth', text: 'write tests', status: 'in_progress' },
+          { phase: 'Auth', text: 'ship fix', status: 'pending' },
+          { phase: 'Auth', text: 'rotate key', status: 'blocked', blocker: 'waiting on ops' },
+          { phase: 'Docs', text: 'update readme', status: 'completed' },
+          { phase: 'Docs', text: 'drop draft', status: 'abandoned' },
+        ],
+      },
+    ];
+    registerPeerStatusTool(
+      {
+        registerTool: (def) => {
+          tools[def.name] = def;
+        },
+      },
+      { listPeers: async () => peers, now }
+    );
     const text = (await tools['peer_status'].execute('id-1', { to: 'todo-peer' })).content[0].text;
     assert.match(text, /working/);
     assert.match(text, /running tests/);
@@ -1270,12 +1498,34 @@ describe('activity, todos, and request/reply tools', () => {
 
   it('peer_status renders legacy doing/done statuses and flat todos', async () => {
     const tools = {};
-    const peers = [{
-      v: 1, pid: 47666, name: 'todo-peer', cwd: '/w/td', project: 'td', harness: 'pi',
-      sessionId: '', model: '', socket: '', startedAt: 1, beatAt: Date.now(), busy: false,
-      todos: [{ text: 'legacy doing', status: 'doing' }, { text: 'legacy done', status: 'done' }],
-    }];
-    registerPeerStatusTool({ registerTool: (def) => { tools[def.name] = def; } }, { listPeers: async () => peers, now });
+    const peers = [
+      {
+        v: 1,
+        pid: 47666,
+        name: 'todo-peer',
+        cwd: '/w/td',
+        project: 'td',
+        harness: 'pi',
+        sessionId: '',
+        model: '',
+        socket: '',
+        startedAt: 1,
+        beatAt: Date.now(),
+        busy: false,
+        todos: [
+          { text: 'legacy doing', status: 'doing' },
+          { text: 'legacy done', status: 'done' },
+        ],
+      },
+    ];
+    registerPeerStatusTool(
+      {
+        registerTool: (def) => {
+          tools[def.name] = def;
+        },
+      },
+      { listPeers: async () => peers, now }
+    );
     const text = (await tools['peer_status'].execute('id-1', { to: 'todo-peer' })).content[0].text;
     assert.match(text, /\[~\] legacy doing/);
     assert.match(text, /\[x\] legacy done/);
@@ -1284,7 +1534,14 @@ describe('activity, todos, and request/reply tools', () => {
 
   it('peer_status reports unknown peer', async () => {
     const tools = {};
-    registerPeerStatusTool({ registerTool: (def) => { tools[def.name] = def; } }, { listPeers: async () => [], now });
+    registerPeerStatusTool(
+      {
+        registerTool: (def) => {
+          tools[def.name] = def;
+        },
+      },
+      { listPeers: async () => [], now }
+    );
     const res = await tools['peer_status'].execute('id-2', { to: 'missing' });
     assert.match(res.content[0].text, /Unknown peer "missing". Live peers: none/);
   });
@@ -1293,16 +1550,23 @@ describe('activity, todos, and request/reply tools', () => {
     const pendingReplies = new Map();
     const tools = {};
     let capturedReplyTo;
-    registerPeerRequestTool({ registerTool: (def) => { tools[def.name] = def; } }, {
-      ownName: () => 'alpha',
-      getHop: (to) => 0,
-      send: async (to, message, outDeps) => {
-        capturedReplyTo = outDeps.replyTo;
-        return 'Delivered to beta (injected). Its reply will arrive as a peer message.';
+    registerPeerRequestTool(
+      {
+        registerTool: (def) => {
+          tools[def.name] = def;
+        },
       },
-      listPeers: async () => [],
-      getPendingReplies: () => pendingReplies,
-    });
+      {
+        ownName: () => 'alpha',
+        getHop: (_to) => 0,
+        send: async (_to, _message, outDeps) => {
+          capturedReplyTo = outDeps.replyTo;
+          return 'Delivered to beta (injected). Its reply will arrive as a peer message.';
+        },
+        listPeers: async () => [],
+        getPendingReplies: () => pendingReplies,
+      }
+    );
     const executePromise = tools['peer_request'].execute('id-4', { to: 'beta', message: 'hello', timeout_ms: 5000 });
     // Give the execute a moment to set the pending entry and timer, then reply.
     await new Promise((r) => setTimeout(r, 50));
@@ -1317,13 +1581,20 @@ describe('activity, todos, and request/reply tools', () => {
   it('peer_request times out with a peer_status hint', async () => {
     const pendingReplies = new Map();
     const tools = {};
-    registerPeerRequestTool({ registerTool: (def) => { tools[def.name] = def; } }, {
-      ownName: () => 'alpha',
-      getHop: (to) => 0,
-      send: async () => 'Delivered to beta (injected). Its reply will arrive as a peer message.',
-      listPeers: async () => [],
-      getPendingReplies: () => pendingReplies,
-    });
+    registerPeerRequestTool(
+      {
+        registerTool: (def) => {
+          tools[def.name] = def;
+        },
+      },
+      {
+        ownName: () => 'alpha',
+        getHop: (_to) => 0,
+        send: async () => 'Delivered to beta (injected). Its reply will arrive as a peer message.',
+        listPeers: async () => [],
+        getPendingReplies: () => pendingReplies,
+      }
+    );
     const res = await tools['peer_request'].execute('id-5', { to: 'beta', message: 'hello', timeout_ms: 100 });
     assert.match(res.content[0].text, /timed out/);
   });
@@ -1339,10 +1610,7 @@ describe('ack-class messages', () => {
 
   it('acknowledges an inbound ack as an info toast without waking the host', async () => {
     const { cur, deps } = live();
-    const res = await deliverInboundPeerMessage(
-      { from: 'alpha', body: 'ping — loop closed', ack: true },
-      deps
-    );
+    const res = await deliverInboundPeerMessage({ from: 'alpha', body: 'ping — loop closed', ack: true }, deps);
     assert.equal(res.outcome, 'acked');
     assert.equal(cur.sent.length, 0);
     assert.equal(cur.noted.length, 1);
@@ -1353,7 +1621,7 @@ describe('ack-class messages', () => {
 
   it('clamps an oversized ack body in the toast text', async () => {
     const { cur, deps } = live();
-    const body = 'HEAD-' + 'x'.repeat(200);
+    const body = `HEAD-${'x'.repeat(200)}`;
     const res = await deliverInboundPeerMessage({ from: 'alpha', body, ack: true }, deps);
     assert.equal(res.outcome, 'acked');
     assert.equal(cur.noted.length, 1);
@@ -1421,8 +1689,18 @@ describe('ack-class messages', () => {
     await new Promise((r) => setTimeout(r, 500));
     try {
       const record = {
-        v: 1, pid: 47889, name: 'delta', cwd: '/w/d', project: 'd', harness: 'omp',
-        sessionId: '', model: '', socket: addr, startedAt: 1, beatAt: Date.now(), busy: false,
+        v: 1,
+        pid: 47889,
+        name: 'delta',
+        cwd: '/w/d',
+        project: 'd',
+        harness: 'omp',
+        sessionId: '',
+        model: '',
+        socket: addr,
+        startedAt: 1,
+        beatAt: Date.now(),
+        busy: false,
       };
       const receipt = await sendToPeer('delta', 'receipt-confirm', {
         ownName: 'alpha',
@@ -1444,12 +1722,22 @@ describe('ack-class messages', () => {
 
 describe('messages the user types (/msg, the /peers Message action)', () => {
   const peerRecord = (name, pid, extra = {}) => ({
-    v: 1, pid, name, cwd: `/w/${name}`, project: name, harness: 'omp',
-    sessionId: `s-${name}`, model: '', socket: peerSocketAddress(STATE, pid),
-    startedAt: 1, beatAt: Date.now(), busy: false, ...extra,
+    v: 1,
+    pid,
+    name,
+    cwd: `/w/${name}`,
+    project: name,
+    harness: 'omp',
+    sessionId: `s-${name}`,
+    model: '',
+    socket: peerSocketAddress(STATE, pid),
+    startedAt: 1,
+    beatAt: Date.now(),
+    busy: false,
+    ...extra,
   });
 
-  it('labels a human frame as typed by the peer\'s user, still without authority', async () => {
+  it("labels a human frame as typed by the peer's user, still without authority", async () => {
     const addr = peerSocketAddress(STATE, 47901);
     const seen = [];
     const srv = startPeerServer({
@@ -1511,13 +1799,22 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
   });
 
   it('parses /msg as a peer name then the whole remaining text', () => {
-    assert.deepEqual(parseMsgArgs('  edge-2bf0  hold it\nuntil I check  '), { to: 'edge-2bf0', body: 'hold it\nuntil I check' });
+    assert.deepEqual(parseMsgArgs('  edge-2bf0  hold it\nuntil I check  '), {
+      to: 'edge-2bf0',
+      body: 'hold it\nuntil I check',
+    });
     assert.equal(parseMsgArgs('edge-2bf0'), undefined);
     assert.equal(parseMsgArgs('   '), undefined);
   });
 
   /** A fake TUI whose select/input answers are scripted in order. */
-  function harness({ answers = [], withInput = true, withEditor = true, peers, receipt = 'Delivered to beta (woken).' }) {
+  function harness({
+    answers = [],
+    withInput = true,
+    withEditor = true,
+    peers,
+    receipt = 'Delivered to beta (woken).',
+  }) {
     const commands = {};
     const noted = [];
     const selects = [];
@@ -1531,10 +1828,20 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
         return queue.shift();
       },
       ...(withInput ? { input: async () => queue.shift() } : {}),
-      ...(withEditor ? { setEditorText: (text) => { editor = text; } } : {}),
+      ...(withEditor
+        ? {
+            setEditorText: (text) => {
+              editor = text;
+            },
+          }
+        : {}),
     };
     registerPeersCommand(
-      { registerCommand: (name, def) => { commands[name] = def; } },
+      {
+        registerCommand: (name, def) => {
+          commands[name] = def;
+        },
+      },
       {
         getSnapshot: async () => ({ ownName: 'alpha', peers }),
         sendAsUser: async (to, body) => {
@@ -1550,7 +1857,9 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
   const roster = () => [
     peerRecord('alpha', 1),
     peerRecord('beta', 2, {
-      busy: true, activity: 'working', label: 'rollout',
+      busy: true,
+      activity: 'working',
+      label: 'rollout',
       todos: [
         { text: 'roll out roost 03', status: 'blocked', blocker: 'Rick OK for link', phase: 'Rollout' },
         { text: 'record update', status: 'completed', phase: 'Rollout' },
@@ -1562,7 +1871,10 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
     const h = harness({ answers: [undefined], peers: roster() });
     await h.commands['peers'].handler('', h.ctx);
     const [picker] = h.selects;
-    assert.deepEqual(picker.options.map((o) => o.label), ['beta']);
+    assert.deepEqual(
+      picker.options.map((o) => o.label),
+      ['beta']
+    );
     assert.match(picker.title, /you are alpha/);
     const row = picker.options[0].description;
     assert.equal(row.match(/working/g).length, 1);

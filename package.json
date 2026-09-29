@@ -19,7 +19,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test test/peers.mjs",
+    "lint": "biome check src test",
+    "format": "biome check --write src test",
+    "test": "npm run build && npm run lint && node --test test/peers.mjs",
     "smoke": "npm run build && node test/peers.mjs"
   },
   "omp": {
@@ -48,6 +50,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@biomejs/biome": "2.5.14",
     "@types/node": "^26.5.0",
     "typescript": "^7.0.2"
   }

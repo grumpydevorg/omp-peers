@@ -119,11 +119,7 @@ export function recordPeerWake(wakes: Map<string, number[]>, from: string, now: 
 // `followUp` queues without starting a turn in either host state — that is
 // the wake budget's intent; `aside` would still wake an idle session.
 // Returns the failure message when the host rejects the call.
-async function aside(
-  pi: ExtensionHostLike,
-  ctx: CommandContextLike,
-  text: string
-): Promise<string | undefined> {
+async function aside(pi: ExtensionHostLike, ctx: CommandContextLike, text: string): Promise<string | undefined> {
   try {
     await pi.sendUserMessage?.(text, { deliverAs: 'followUp', attribution: 'agent' });
     return undefined;
@@ -160,10 +156,7 @@ export async function deliverInboundPeerMessage(
   if (frame.ack === true) {
     // DISPLAY-ONLY TOAST — NEVER sendUserMessage, NEVER WAKE BUDGET, NEVER HOLD.
     try {
-      cur.ctx.ui.notify(
-        `↩ ack ${from}: ${body.length > 160 ? body.slice(0, 160) + '…' : body}`,
-        'info'
-      );
+      cur.ctx.ui.notify(`↩ ack ${from}: ${body.length > 160 ? `${body.slice(0, 160)}…` : body}`, 'info');
     } catch {
       // Toast is best-effort.
     }

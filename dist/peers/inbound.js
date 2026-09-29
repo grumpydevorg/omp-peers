@@ -99,7 +99,7 @@ export async function deliverInboundPeerMessage(frame, deps) {
     if (frame.ack === true) {
         // DISPLAY-ONLY TOAST — NEVER sendUserMessage, NEVER WAKE BUDGET, NEVER HOLD.
         try {
-            cur.ctx.ui.notify(`↩ ack ${from}: ${body.length > 160 ? body.slice(0, 160) + '…' : body}`, 'info');
+            cur.ctx.ui.notify(`↩ ack ${from}: ${body.length > 160 ? `${body.slice(0, 160)}…` : body}`, 'info');
         }
         catch {
             // Toast is best-effort.
