@@ -88,16 +88,26 @@ function reply(socket: Socket, payload: PeerReply): void {
 export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
   const coalesceMs = opts.coalesceMs ?? COALESCE_MS;
   // Keyed by the sender's id (name for older senders), so a burst stays one
-  // batch even if the sender's name changes mid-burst.
+  // batch even if the sender's name changes mid-burst. Every member socket
+  // waits for the batch's own outcome: a receipt never claims more than
+  // happened to the message.
   const pending = new Map<
     string,
-    { from: string; fromId?: string; bodies: string[]; replyTo?: string; hop: number; human: boolean; first: Socket }
+    {
+      from: string;
+      fromId?: string;
+      bodies: string[];
+      replyTo?: string;
+      hop: number;
+      human: boolean;
+      members: Socket[];
+    }
   >();
   const sockets = new Set<Socket>();
   let stopped = false;
   let server: Server | undefined;
 
-  async function deliverBatch(key: string, first: Socket): Promise<void> {
+  async function deliverBatch(key: string): Promise<void> {
     if (stopped) return;
     await new Promise<void>((resolve) => {
       const wait = setTimeout(resolve, coalesceMs);
@@ -122,11 +132,12 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
         hop: batch.hop,
         ...(batch.human ? { human: true } : {}),
       });
-      reply(first, { ok: true, outcome });
+      for (const member of batch.members) reply(member, { ok: true, outcome });
     } catch (err) {
       // `key` was already deleted above — deleting again could eat a NEWER
       // pending entry that arrived while onMessage was failing.
-      reply(first, { ok: false, error: err instanceof Error ? err.message : String(err) });
+      const error = err instanceof Error ? err.message : String(err);
+      for (const member of batch.members) reply(member, { ok: false, error });
     }
   }
 
@@ -206,7 +217,7 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
       // One agent-written message makes the whole batch agent text: the
       // label must never overstate who wrote it.
       known.human = known.human && frame.human === true;
-      reply(socket, { ok: true, outcome: 'coalesced' });
+      known.members.push(socket);
       return;
     }
     pending.set(key, {
@@ -216,9 +227,9 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
       ...(frame.replyTo !== undefined && frame.replyTo !== '' ? { replyTo: frame.replyTo } : {}),
       hop,
       human: frame.human === true,
-      first: socket,
+      members: [socket],
     });
-    contain(deliverBatch(key, socket), 'batch delivery');
+    contain(deliverBatch(key), 'batch delivery');
   }
 
   function accept(socket: Socket): void {
@@ -302,17 +313,19 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
         // Close is best-effort.
       }
       server = undefined;
-      // Senders parked in the coalesce window get a real reply instead of
-      // hanging until their request timeout; end() flushes the reply where
-      // destroy() could discard it.
+      // Senders parked in the coalesce window get a real refusal instead of
+      // hanging until their request timeout: none of their messages reached
+      // the host. end() flushes the reply where destroy() could discard it.
       for (const entry of pending.values()) {
-        reply(entry.first, { ok: false, error: 'peer shutting down' });
-        try {
-          entry.first.end();
-        } catch {
-          // Shutdown is best-effort.
+        for (const member of entry.members) {
+          reply(member, { ok: false, error: 'peer shutting down' });
+          try {
+            member.end();
+          } catch {
+            // Shutdown is best-effort.
+          }
+          sockets.delete(member);
         }
-        sockets.delete(entry.first);
       }
       pending.clear();
       for (const socket of sockets) {

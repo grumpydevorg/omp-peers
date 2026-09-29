@@ -54,8 +54,9 @@ export {
   type PresenceBeatOptions,
 } from './peers/presence.js';
 
-// Heartbeat loop (single-flight; stop is final).
+// Heartbeat loop (single-flight; stop is final) and the held queue built on it.
 export { createBeatLoop, type BeatLoop } from './peers/beat.js';
+export { createHeldQueue, type HeldQueue, type HeldQueueDeps } from './peers/held.js';
 
 // Transport.
 export {
