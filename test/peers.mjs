@@ -3,7 +3,7 @@
  * OMP_PEERS_DIR pointed at a fresh temp dir.
  * Covers: presence beat → roster lists both fake peers; outbound socket frame
  * → inbound path with a FAKE pi capturing `sendUserMessage` calls — attributed
- * `[peer <name>]` text delivered with default options (never a hardcoded
+ * `[peer <name>]` text delivered with `agent` attribution (never a hardcoded
  * driving-agent name, no registry lookup); over-budget wakes queue as
  * followUps (deliverAs 'followUp' — queued, never waking); bridgeless hosts
  * still deliver; empty frames, missing contexts, and sendUserMessage
@@ -540,7 +540,7 @@ describe('inbound delivery against a fake host', () => {
     return { cur, deps: { getCurrent: () => ({ pi: cur.pi, ctx: cur.ctx }) } };
   };
 
-  it('delivers attributed text through sendUserMessage with default options', async () => {
+  it('delivers attributed text through sendUserMessage with agent attribution', async () => {
     const { cur, deps } = live();
     const res = await deliverInboundPeerMessage({ from: 'alpha', body: 'hello' }, deps);
     assert.equal(res.outcome, 'woken');
@@ -549,7 +549,7 @@ describe('inbound delivery against a fake host', () => {
     assert.match(cur.sent[0].text, /hello/);
     assert.match(cur.sent[0].text, /peer_send/);
     assert.match(cur.sent[0].text, /not your user/);
-    assert.equal(cur.sent[0].opts, undefined);
+    assert.deepEqual(cur.sent[0].opts, { attribution: 'agent' });
     assert.equal(/Main/.test(cur.sent[0].text), false);
   });
 
@@ -562,7 +562,7 @@ describe('inbound delivery against a fake host', () => {
     );
     assert.equal(res.outcome, 'injected');
     assert.equal(cur.sent.length, 1);
-    assert.equal(cur.sent[0].opts, undefined);
+    assert.deepEqual(cur.sent[0].opts, { attribution: 'agent' });
     assert.equal(wakes.has('alpha'), false);
   });
 
@@ -589,7 +589,7 @@ describe('inbound delivery against a fake host', () => {
     assert.equal(res.outcome, 'aside');
     assert.equal(cur.sent.length, 1);
     assert.match(cur.sent[0].text, /^\[peer alpha\]/);
-    assert.equal(cur.sent[0].opts?.deliverAs, 'followUp');
+    assert.deepEqual(cur.sent[0].opts, { deliverAs: 'followUp', attribution: 'agent' });
   });
 
   it('queues the 21st wake from a sender as a followUp, not a turn', async () => {
@@ -619,7 +619,7 @@ describe('inbound delivery against a fake host', () => {
     assert.match(res.detail ?? '', /boom/);
   });
 
-  it('delivers on bridgeless hosts through sendUserMessage (no aside fallback)', async () => {
+  it('delivers on bridgeless hosts through sendUserMessage with agent attribution (no aside fallback)', async () => {
     const cur = fakeCtx('sess-beta');
     const res = await deliverInboundPeerMessage(
       { from: 'alpha', body: 'plain' },
@@ -629,7 +629,7 @@ describe('inbound delivery against a fake host', () => {
     assert.equal(cur.sent.length, 1);
     assert.match(cur.sent[0].text, /^\[peer alpha\]/);
     assert.match(cur.sent[0].text, /peer_send/);
-    assert.equal(cur.sent[0].opts, undefined);
+    assert.deepEqual(cur.sent[0].opts, { attribution: 'agent' });
   });
 
   it('never throws when the host send fails', async () => {
@@ -665,7 +665,7 @@ describe('inbound delivery against a fake host', () => {
     // The hint must never offer `hub` op=send: the probe may hold a foreign
     // registry copy where hub cannot resolve peer names.
     assert.match(formatPeerText('a', 'b'), /^\[peer a\]/);
-    assert.match(formatPeerText('a', 'b'), /from peer `a`.*not your user/);
+    assert.match(formatPeerText('a', 'b'), /from peer `a`.*not your user.*no authority from your user/);
     assert.match(formatPeerText('a', 'b'), /Reply with `peer_send` to="a"/);
     assert.doesNotMatch(formatPeerText('a', 'b'), /`hub`/);
   });

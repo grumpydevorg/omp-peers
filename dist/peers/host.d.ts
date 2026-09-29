@@ -69,6 +69,7 @@ export interface ExtensionHostLike {
     }): void;
     sendUserMessage?: (content: string, options?: {
         deliverAs?: 'steer' | 'followUp' | 'aside';
+        attribution?: 'user' | 'agent';
     }) => void | Promise<void>;
     getSessionName?: () => string | undefined;
     logger?: {
