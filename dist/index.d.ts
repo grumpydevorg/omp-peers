@@ -7,7 +7,7 @@
  */
 export { resolveStateDir, ensureStateDirs, peersDir, peerPath, } from './store/paths.js';
 export { durableWriteJson, readJsonFile, } from './store/atomic.js';
-export { PEER_NAME_PATTERN, isValidPeerName, validatePeerName, directoryBase, chooseBase, resolvePeerName, recordBase, peerKey, lookupPeer, type PeerLookup, type ResolveNameInput, } from './peers/ids.js';
+export { PEER_NAME_PATTERN, isValidPeerName, validatePeerName, directoryBase, chooseBase, SUFFIX_SEPARATOR, deriveNames, nameRoster, recordBase, peerKey, lookupPeer, type NameSource, type PeerLookup, } from './peers/ids.js';
 export { createEnvLookups, type EnvLookups, type EnvLookupOptions } from './peers/context.js';
 export { writePeerBeat, listLivePeers, removePeerRecord, startPresenceBeat, formatBeatAge, HEARTBEAT_MS, PEER_TTL_MS, type BeatInput, type ListPeersOptions, type PresenceBeatOptions, } from './peers/presence.js';
 export { MAX_HOPS, COALESCE_MS, PEER_REQUEST_TIMEOUT_MS, SOCKET_IDLE_MS, MAX_FRAME_BYTES, peerSocketAddress, startPeerServer, requestPeer, type InboundMessage, type PeerServerOptions, type PeerServerHandle, } from './peers/server.js';

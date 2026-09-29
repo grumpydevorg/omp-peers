@@ -25,12 +25,14 @@ export {
   validatePeerName,
   directoryBase,
   chooseBase,
-  resolvePeerName,
+  SUFFIX_SEPARATOR,
+  deriveNames,
+  nameRoster,
   recordBase,
   peerKey,
   lookupPeer,
+  type NameSource,
   type PeerLookup,
-  type ResolveNameInput,
 } from './peers/ids.js';
 
 // Environment lookups (git top level, herdr tab label).
