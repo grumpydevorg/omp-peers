@@ -78,9 +78,23 @@ export interface PeerRecord {
   aliases?: string[];
 }
 
-/** Frame exchanged over a peer socket, one JSON object per line. */
+/**
+ * Frame exchanged over a peer socket, one JSON object per line. `human` marks
+ * text the sender's user typed (`/msg`, the `/peers` Message action) rather
+ * than text its agent wrote; the receiver labels it, and it still carries no
+ * authority there. Receivers older than 2.0.0 ignore the field.
+ */
 export type PeerFrame =
-  | { t: 'msg'; from: string; fromId?: string; body: string; replyTo?: string; hop?: number; ack?: boolean }
+  | {
+      t: 'msg';
+      from: string;
+      fromId?: string;
+      body: string;
+      replyTo?: string;
+      hop?: number;
+      ack?: boolean;
+      human?: boolean;
+    }
   | { t: 'ping'; from: string };
 
 /** One-line JSON reply to a {@link PeerFrame}. */

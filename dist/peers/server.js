@@ -80,6 +80,7 @@ export function startPeerServer(opts) {
                 body,
                 ...(batch.replyTo !== undefined ? { replyTo: batch.replyTo } : {}),
                 hop: batch.hop,
+                ...(batch.human ? { human: true } : {}),
             });
             reply(first, { ok: true, outcome });
         }
@@ -157,6 +158,9 @@ export function startPeerServer(opts) {
         if (known) {
             known.bodies.push(frame.body);
             known.hop = Math.max(known.hop, hop);
+            // One agent-written message makes the whole batch agent text: the
+            // label must never overstate who wrote it.
+            known.human = known.human && frame.human === true;
             reply(socket, { ok: true, outcome: 'coalesced' });
             return;
         }
@@ -166,6 +170,7 @@ export function startPeerServer(opts) {
             bodies: [frame.body],
             ...(frame.replyTo !== undefined && frame.replyTo !== '' ? { replyTo: frame.replyTo } : {}),
             hop,
+            human: frame.human === true,
             first: socket,
         });
         contain(deliverBatch(key, socket), 'batch delivery');

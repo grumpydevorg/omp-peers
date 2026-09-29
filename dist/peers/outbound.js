@@ -59,6 +59,7 @@ export async function sendToPeer(to, message, deps) {
             body,
             ...(deps.replyTo !== undefined && deps.replyTo !== '' ? { replyTo: deps.replyTo } : {}),
             ...(deps.ack === true ? { ack: true } : {}),
+            ...(deps.human === true ? { human: true } : {}),
             hop,
         });
         if (reply === undefined) {
