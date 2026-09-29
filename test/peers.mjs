@@ -856,14 +856,15 @@ describe('peer_send registration is mode-independent', () => {
       sendImpl,
     };
   }
-  for (const mode of ['hub', 'tools']) {
-    it(`registers peer_send in ${mode} mode`, async () => {
-      const { pi, tools } = fakePi(async () => 'ok');
-      registerPeerSendTool(pi, { send: async (to, message) => `sent:${to}:${message}` });
-      assert.ok(tools['peer_send'], `peer_send registered in ${mode} mode`);
-      assert.deepEqual(tools['peer_send'].parameters.required, ['to', 'message']);
-    });
-  }
+  it('registers peer_send as an essential tool, callable by name', async () => {
+    const { pi, tools } = fakePi(async () => 'ok');
+    registerPeerSendTool(pi, { send: async (to, message) => `sent:${to}:${message}` });
+    assert.ok(tools['peer_send']);
+    // omp mounts discoverable tools behind `write xd://`; the roster note
+    // tells agents to call `peer_send` directly, so it must be essential.
+    assert.equal(tools['peer_send'].loadMode, 'essential');
+    assert.deepEqual(tools['peer_send'].parameters.required, ['to', 'message']);
+  });
   it('execute delegates to send and surfaces failures as text', async () => {
     const { tools } = fakePi(async () => 'ok');
     registerPeerSendTool(

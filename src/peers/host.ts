@@ -71,6 +71,11 @@ export interface ExtensionHostLike {
     label: string;
     description: string;
     parameters: unknown;
+    /**
+     * omp mounts `discoverable` tools (its default) behind `write xd://<name>`
+     * rather than as direct tools; `essential` keeps them callable by name.
+     */
+    loadMode?: 'essential' | 'discoverable';
     execute: (
       toolCallId: string,
       params: Record<string, unknown>,

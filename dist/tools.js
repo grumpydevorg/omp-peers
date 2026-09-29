@@ -15,6 +15,7 @@ export function registerPeerSendTool(pi, deps) {
     pi.registerTool({
         name: 'peer_send',
         label: 'Peer Send',
+        loadMode: 'essential',
         description: 'Send a message to another live peer instance by name (see `/peers`). Only use when the user explicitly asks for cross-instance contact, or to reply to an inbound peer message — never use peers as subagents on your own. It is delivered as a real prompt: it steers the peer mid-turn or wakes it if idle. Fire-and-forget — the peer\'s reply arrives as a separate peer message.',
         parameters: {
             type: 'object',
@@ -91,6 +92,7 @@ export function registerPeerStatusTool(pi, deps) {
     pi.registerTool({
         name: 'peer_status',
         label: 'Peer Status',
+        loadMode: 'essential',
         description: "Check what another live peer is doing: busy/idle, current activity, its native todo list (grouped by phase, newest state), and last heartbeat age. `to` is the peer name from `/peers`.",
         parameters: {
             type: 'object',
@@ -145,6 +147,7 @@ export function registerPeerRequestTool(pi, deps) {
     pi.registerTool({
         name: 'peer_request',
         label: 'Peer Request',
+        loadMode: 'essential',
         description: 'Send a message to another live peer and wait for a matching reply with a timeout. `to` is the peer name, `message` the body. `timeout_ms` defaults to 30000 and is clamped between 5000 and 120000. `replyTo` is an optional correlation id; one is generated if omitted. The tool returns the reply body or a timeout message with a peer_status hint.',
         parameters: {
             type: 'object',
