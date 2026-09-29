@@ -5,8 +5,8 @@
  * → inbound path with a FAKE pi capturing `sendUserMessage` calls — attributed
  * `[peer <name>]` text delivered with `agent` attribution (never a hardcoded
  * driving-agent name, no registry lookup); over-budget wakes queue as
- * followUps (deliverAs 'followUp' — queued, never waking); bridgeless hosts
- * still deliver; empty frames, missing contexts, and sendUserMessage
+ * followUps (deliverAs 'followUp' — queued, never waking); empty frames,
+ * missing contexts, and sendUserMessage
  * rejections drop without touching the host; hop-cap refusal both locally
  * (before any socket I/O) and server-side; conversation-aware hop accounting
  * (a request/reply round trip stays level, a relay advances, a human prompt
@@ -104,12 +104,12 @@ describe('presence beat → roster lists both peers', () => {
     const live = await listLivePeers(STATE, 47111, { isAlive: ALIVE });
     assert.equal(live.length, 2);
     assert.deepEqual(live.map((p) => p.name), ['alpha', 'beta']);
-    const note = buildPeersNote('alpha', live, 'tools');
+    const note = buildPeersNote('alpha', live);
     assert.match(note, /`alpha`/);
     assert.match(note, /`beta`/);
     assert.match(note, /peer_send/);
-    const hubNote = buildPeersNote('alpha', live, 'hub');
-    assert.match(hubNote, /`hub`/);
+    // Never a native `hub` path: peers are not in the host's agent registry.
+    assert.doesNotMatch(note, /`hub`/);
   });
 
   it('reaps dead pids and expired beats on sight', async () => {
@@ -137,7 +137,7 @@ describe('presence beat → roster lists both peers', () => {
   });
 
   it('compacts the roster note when no peers are live', () => {
-    const solo = buildPeersNote('alpha', [], 'tools');
+    const solo = buildPeersNote('alpha', []);
     assert.match(solo, /`alpha`/);
     assert.match(solo, /No other peers are live/);
     assert.doesNotMatch(solo, /peer_send/);
@@ -148,7 +148,6 @@ describe('presence beat → roster lists both peers', () => {
     const text = formatPeersText(
       {
         ownName: 'alpha',
-        mode: 'hub',
         peers: [
           {
             v: 1, pid: 47111, name: 'alpha', cwd: '/w/a', project: 'a', harness: 'omp',
@@ -163,9 +162,9 @@ describe('presence beat → roster lists both peers', () => {
 
   it('surfaces held batches in the /peers header', () => {
     const now = Date.now();
-    const held = formatPeersText({ ownName: 'alpha', mode: 'tools', peers: [], held: 2 }, now);
+    const held = formatPeersText({ ownName: 'alpha', peers: [], held: 2 }, now);
     assert.match(held, /held 2/);
-    const clear = formatPeersText({ ownName: 'alpha', mode: 'tools', peers: [] }, now);
+    const clear = formatPeersText({ ownName: 'alpha', peers: [] }, now);
     assert.doesNotMatch(clear, /held/);
   });
 
@@ -619,7 +618,7 @@ describe('inbound delivery against a fake host', () => {
     assert.match(res.detail ?? '', /boom/);
   });
 
-  it('delivers on bridgeless hosts through sendUserMessage with agent attribution (no aside fallback)', async () => {
+  it('delivers through sendUserMessage with agent attribution (no aside fallback)', async () => {
     const cur = fakeCtx('sess-beta');
     const res = await deliverInboundPeerMessage(
       { from: 'alpha', body: 'plain' },
@@ -662,8 +661,6 @@ describe('inbound delivery against a fake host', () => {
   });
 
   it('prefixes every injection, names the peer as not-the-user, and points replies at peer_send', () => {
-    // The hint must never offer `hub` op=send: the probe may hold a foreign
-    // registry copy where hub cannot resolve peer names.
     assert.match(formatPeerText('a', 'b'), /^\[peer a\]/);
     assert.match(formatPeerText('a', 'b'), /from peer `a`.*not your user.*no authority from your user/);
     assert.match(formatPeerText('a', 'b'), /Reply with `peer_send` to="a"/);
@@ -1117,7 +1114,7 @@ describe('activity, todos, and request/reply tools', () => {
       sessionId: '', model: '', socket: '', startedAt: 1, beatAt: t, busy: false,
       activity: 'fixing login', todos: [{ text: 'write tests' }],
     };
-    const note = buildPeersNote('alpha', [peer], 'tools');
+    const note = buildPeersNote('alpha', [peer]);
     assert.match(note, /fixing login/);
     assert.match(note, /1 todo/);
     assert.match(note, /peer_status/);

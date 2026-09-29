@@ -81,26 +81,16 @@ export { sendToPeer, outboundHop, type HopState, type OutboundDeps } from './pee
 export {
   buildPeersNote,
   appendNoteToMessages,
-  type RosterMode,
   type RosterMessage,
 } from './peers/roster.js';
 
 // Host seam.
 export {
-  probeHost,
-  listLocalAgentIds,
-  claimBridgedPeer,
+  detectHarness,
   readTitleSource,
   readNativeTodos,
   MAX_PEER_TODOS,
   MAX_PEER_TODO_TEXT_CHARS,
-  releaseBridgedPeer,
-  peerActivityFor,
-  type HostProbe,
-  type HubBridge,
-  type RegistryLike,
-  type RegistryRefLike,
-  type PeerRequestFn,
   type CommandContextLike,
   type ExtensionHostLike,
   type UiLike,
