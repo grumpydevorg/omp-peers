@@ -6,6 +6,8 @@
  *      single-flight and stop is final).
  * I3 — a presence file is deleted only by its owner, or once its instance
  *      is proven dead.
+ * I5 — every accepted message reaches exactly one end, and the sender's
+ *      receipt never claims more than that end.
  */
 
 import assert from 'node:assert/strict';
@@ -18,6 +20,7 @@ import fc from 'fast-check';
 const {
   PEER_TTL_MS,
   createBeatLoop,
+  createHeldQueue,
   listLivePeers,
   peerSocketAddress,
   reapPeer,
@@ -327,6 +330,121 @@ describe('I2: a stopped node writes nothing more', () => {
         }
       ),
       { numRuns: 300 }
+    );
+  });
+});
+
+describe('I5: every accepted message ends exactly once, as its receipt says', () => {
+  let pid = 48300;
+
+  it('every member of a coalesced batch gets the batch outcome, or all are refused at stop', async () => {
+    const outcome = fc.constantFrom('injected', 'woken', 'held', 'aside', 'dropped', 'throw');
+    await fc.assert(
+      fc.asyncProperty(fc.integer({ min: 1, max: 4 }), outcome, fc.boolean(), async (burst, result, stopInWindow) => {
+        pid += 1;
+        const address = peerSocketAddress(STATE, pid);
+        const calls = [];
+        const server = startPeerServer({
+          address,
+          ownName: () => 'receiver',
+          ownId: () => 'receiver-id',
+          coalesceMs: 150,
+          onMessage: async (msg) => {
+            calls.push(msg);
+            if (result === 'throw') throw new Error('host failed');
+            return result;
+          },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        try {
+          const bodies = Array.from({ length: burst }, (_, i) => `body-${pid}-${i}`);
+          const replies = Promise.all(
+            bodies.map((body) => requestPeer(address, { t: 'msg', from: 'sender', fromId: 'sid', body, hop: 0 }))
+          );
+          if (stopInWindow) setTimeout(() => server.stop(), 40);
+          const answers = await replies;
+          if (stopInWindow) {
+            assert.equal(calls.length, 0, 'a refused batch reached the host');
+            for (const a of answers) assert.deepEqual(a, { ok: false, error: 'peer shutting down' });
+            return;
+          }
+          assert.equal(calls.length, 1, 'one batch, one host call');
+          for (const body of bodies) assert.ok(calls[0].body.includes(body), `${body} in the delivered batch`);
+          const expected = result === 'throw' ? { ok: false, error: 'host failed' } : { ok: true, outcome: result };
+          for (const a of answers) assert.deepEqual(a, expected);
+        } finally {
+          server.stop();
+        }
+      }),
+      { numRuns: 30 }
+    );
+  });
+
+  it('a held batch is delivered or its sender told, exactly once, in every interleaving', async () => {
+    const fate = fc.constantFrom('woken', 'aside', 'dropped', 'throw');
+    // Weighted toward what makes the queue interesting: more holds than the
+    // limit arriving while a retry is delivering, with the peer not typing.
+    const command = fc.oneof(
+      { arbitrary: fate.map((f) => ({ kind: 'hold', fate: f })), weight: 4 },
+      { arbitrary: fc.constant({ kind: 'retry' }), weight: 2 },
+      { arbitrary: fc.boolean().map((typing) => ({ kind: 'typing', typing })), weight: 1 },
+      { arbitrary: fc.constant({ kind: 'drain' }), weight: 1 }
+    );
+    await fc.assert(
+      fc.asyncProperty(
+        fc.scheduler(),
+        fc.array(command, { minLength: 1, maxLength: 12 }),
+        fc.integer({ min: 1, max: 2 }),
+        async (s, commands, max) => {
+          let typing = true;
+          let nextId = 0;
+          const fates = new Map();
+          const ends = new Map(); // id → ['delivered' | 'dropped: <reason>']
+          const end = (id, what) => ends.set(id, [...(ends.get(id) ?? []), what]);
+          let largest = 0;
+          const queue = createHeldQueue({
+            max,
+            onError: () => undefined,
+            deliver: async (batch) => {
+              await s.schedule(Promise.resolve(), `deliver ${batch.message.body}`);
+              const f = fates.get(batch.message.body);
+              if (typing) return 'held';
+              if (f === 'throw') throw new Error('host failed');
+              if (f !== 'dropped') end(batch.message.body, 'delivered');
+              return f;
+            },
+            dropped: async (batch, reason) => {
+              await s.schedule(Promise.resolve(), `notify ${batch.message.body}`);
+              end(batch.message.body, `dropped: ${reason}`);
+            },
+          });
+          const issued = commands.map((c, i) =>
+            s.schedule(Promise.resolve(), `command ${i}`).then(() => {
+              if (c.kind === 'hold') {
+                nextId += 1;
+                const id = `m${nextId}`;
+                fates.set(id, c.fate);
+                queue.hold({ message: { from: 'sender', body: id, hop: 0 }, receivedAt: 0 });
+                largest = Math.max(largest, queue.size);
+                return undefined;
+              }
+              if (c.kind === 'typing') {
+                typing = c.typing;
+                return undefined;
+              }
+              return c.kind === 'retry' ? queue.retry() : queue.drain('the peer shut down');
+            })
+          );
+          await s.waitFor(Promise.all(issued).then(() => queue.drain('the peer shut down')));
+
+          assert.ok(largest <= max, `${largest} batches held with a limit of ${max}`);
+          assert.equal(queue.size, 0, 'batches left after drain');
+          for (const id of fates.keys()) {
+            assert.equal(ends.get(id)?.length, 1, `${id} ended ${JSON.stringify(ends.get(id) ?? [])}`);
+          }
+        }
+      ),
+      { numRuns: 1000 }
     );
   });
 });

@@ -24,7 +24,8 @@ import { createBeatLoop } from './peers/beat.js';
 import { detectHarness, readNativeTodos, readTitleSource } from './peers/host.js';
 import { chooseBase, directoryBase, isValidPeerName, nameRoster, peerKey } from './peers/ids.js';
 import { createEnvLookups } from './peers/context.js';
-import { deliverInboundPeerMessage, HOLD_POLL_MS, MAX_HELD_BATCHES } from './peers/inbound.js';
+import { createHeldQueue } from './peers/held.js';
+import { deliverInboundPeerMessage, HOLD_POLL_MS, MAX_HELD_BATCHES, } from './peers/inbound.js';
 import { sendToPeer } from './peers/outbound.js';
 import { HEARTBEAT_MS, listLivePeers, reapPeer, removeOwnRecord, startPresenceBeat, writePeerBeat, } from './peers/presence.js';
 import { appendNoteToMessages, buildPeersNote } from './peers/roster.js';
@@ -43,58 +44,63 @@ function liveNode() {
 function currentOf() {
     return liveNode()?.current;
 }
-/** Stash a held batch (bounded) and ensure the retry poller runs. */
+/** Hold a batch and make sure the retry poller runs; it stops once the queue is empty. */
 function holdBatch(st, msg) {
-    st.held.push({ message: { ...msg }, receivedAt: Date.now() });
-    while (st.held.length > MAX_HELD_BATCHES) {
-        // Overflow drops the oldest batch — the sender got a 'held' receipt
-        // promising delivery, so the drop must not be silent.
-        const dropped = st.held.shift();
-        if (dropped !== undefined) {
-            warnOf(st, `peers: held queue full — dropped a message from ${dropped.message.from}`);
-        }
-    }
+    st.held.hold({ message: { ...msg }, receivedAt: Date.now() });
     if (st.holdTimer !== undefined)
         return;
     st.holdTimer = setInterval(() => {
-        void pumpHeld(st).catch((err) => logOf(st, `peers: held retry failed: ${err instanceof Error ? err.message : String(err)}`));
+        void st.held.retry().then(() => {
+            if (st.held.size === 0 && st.holdTimer !== undefined) {
+                clearInterval(st.holdTimer);
+                st.holdTimer = undefined;
+            }
+        });
     }, HOLD_POLL_MS);
     st.holdTimer.unref?.();
 }
-/** Retry held batches oldest-first; drop each once it delivers or ages out. */
-async function pumpHeld(st) {
-    if (st.stopped || node !== st)
-        return;
-    for (const batch of [...st.held]) {
-        if (st.stopped || node !== st)
-            return;
-        const res = await deliverInboundPeerMessage(batch.message, {
-            getCurrent: () => currentOf(),
-            getDraftText: () => {
-                try {
-                    const text = currentOf()?.ctx.ui.getEditorText?.() ?? '';
-                    return typeof text === 'string' ? text : '';
-                }
-                catch {
-                    return '';
-                }
-            },
-            receivedAt: batch.receivedAt,
-            wakes: st.wakes,
-        });
-        // Only a real delivery advances the relay chain — 'held'/'dropped'/'aside'
-        // never reached the agent, so they must not consume a hop.
-        if (res.outcome === 'woken' || res.outcome === 'injected') {
-            st.lastInboundPeer = peerKey(batch.message.fromId, batch.message.from);
-            st.lastInboundHop = batch.message.hop;
-        }
-        if (res.outcome !== 'held')
-            st.held = st.held.filter((b) => b !== batch);
+/** One delivery attempt of a held batch. */
+async function deliverHeld(st, batch) {
+    const res = await deliverInboundPeerMessage(batch.message, {
+        getCurrent: () => currentOf(),
+        getDraftText: () => {
+            try {
+                const text = currentOf()?.ctx.ui.getEditorText?.() ?? '';
+                return typeof text === 'string' ? text : '';
+            }
+            catch {
+                return '';
+            }
+        },
+        receivedAt: batch.receivedAt,
+        wakes: st.wakes,
+    });
+    // Only a real delivery advances the relay chain — 'held'/'dropped'/'aside'
+    // never reached the agent, so they must not consume a hop.
+    if (res.outcome === 'woken' || res.outcome === 'injected') {
+        st.lastInboundPeer = peerKey(batch.message.fromId, batch.message.from);
+        st.lastInboundHop = batch.message.hop;
     }
-    if (st.held.length === 0 && st.holdTimer !== undefined) {
-        clearInterval(st.holdTimer);
-        st.holdTimer = undefined;
-    }
+    return res.outcome;
+}
+/** The roster as this node sees it now: others under derived names, from the presence directory. */
+async function rosterOf(st) {
+    const records = await listLivePeers(st.stateDir, st.pid);
+    return nameRoster(records, { pid: st.pid, base: st.base, sessionId: st.sessionId }).others;
+}
+/**
+ * A held batch will never be delivered: its sender was told `held`, so it is
+ * told this too — as an ack, a toast there that never wakes its agent.
+ */
+async function tellDropped(st, batch, reason) {
+    const to = batch.message.fromId !== undefined && batch.message.fromId !== '' ? batch.message.fromId : batch.message.from;
+    await sendToPeer(to, `Your message to \`${st.name}\` was not delivered: ${reason}.`, {
+        ownName: st.name,
+        ownId: st.sessionId,
+        hop: 0,
+        ack: true,
+        listPeers: () => rosterOf(st),
+    });
 }
 function warnOf(st, text) {
     try {
@@ -124,6 +130,8 @@ function hostRead(st, what, read, fallback) {
 }
 /** How long a name this peer gave up keeps answering, as an alias. */
 const PREVIOUS_NAME_MS = 10 * 60_000;
+/** Longest shutdown waits to tell held batches' senders they will not be delivered. */
+const DRAIN_NOTICE_MS = 1_500;
 /**
  * This peer's name and the other records' names, derived from one set with
  * this peer's current base. Records the name it replaces so senders
@@ -289,7 +297,12 @@ function ensureNode(pi, ctx) {
             wakes: new Map(),
             lastInboundPeer: undefined,
             lastInboundHop: 0,
-            held: [],
+            held: createHeldQueue({
+                max: MAX_HELD_BATCHES,
+                deliver: (batch) => deliverHeld(st, batch),
+                dropped: (batch, reason) => tellDropped(st, batch, reason),
+                onError: (err) => logOf(st, `peers: held delivery failed: ${err instanceof Error ? err.message : String(err)}`),
+            }),
             holdTimer: undefined,
             current: { pi, ctx },
             server: undefined,
@@ -408,10 +421,6 @@ async function stopNode(st) {
         }
         st.holdTimer = undefined;
     }
-    if (st.held.length > 0) {
-        logOf(st, `peers: dropping ${st.held.length} held message(s) on shutdown`);
-    }
-    st.held = [];
     for (const entry of st.pendingReplies.values()) {
         clearTimeout(entry.timer);
         entry.reject(new Error('shutting down'));
@@ -424,6 +433,13 @@ async function stopNode(st) {
         // Shutdown never throws.
     }
     st.server = undefined;
+    // Senders of held batches were told `held`: each now hears its batch will
+    // not be delivered. Bounded, so a peer that does not answer cannot stall
+    // shutdown.
+    await Promise.race([
+        st.held.drain('the peer shut down'),
+        new Promise((resolve) => setTimeout(resolve, DRAIN_NOTICE_MS).unref()),
+    ]);
     if (hasSuccessor())
         return;
     try {
@@ -441,10 +457,7 @@ export default function peersExtension(pi) {
     // name (post-/rename) can't route a send back to ourselves.
     const freshPeers = async () => {
         const st = liveNode();
-        if (st === undefined)
-            return [];
-        return nameRoster(await listLivePeers(st.stateDir, st.pid), { pid: st.pid, base: st.base, sessionId: st.sessionId })
-            .others;
+        return st === undefined ? [] : rosterOf(st);
     };
     registerPeersCommand(pi, {
         getSnapshot: async () => {
@@ -453,15 +466,13 @@ export default function peersExtension(pi) {
                 // Fresh beat before rendering: a just-run /rename must be visible
                 // immediately, not on the next 15s tick. The loop owns its failures.
                 await st.beat.request();
-                return { ownName: st.name, peers: st.peers, held: st.held.length };
+                return { ownName: st.name, peers: st.peers, held: st.held.size };
             }
             return { ownName: '', peers: [], held: 0 };
         },
         cachedSnapshot: () => {
             const st = liveNode();
-            return st !== undefined
-                ? { ownName: st.name, peers: st.peers, held: st.held.length }
-                : { ownName: '', peers: [] };
+            return st !== undefined ? { ownName: st.name, peers: st.peers, held: st.held.size } : { ownName: '', peers: [] };
         },
         // Typed by the user, so it starts a fresh chain: hop 0, never a relay.
         sendAsUser: (to, body) => {

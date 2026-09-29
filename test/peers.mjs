@@ -362,13 +362,12 @@ describe('outbound frame → inbound path', () => {
     assert.match(refused?.error ?? '', /limit is 4/);
   });
 
-  it('coalesces a burst from one sender into a single wake', async () => {
+  it('coalesces a burst from one sender into a single wake, and tells every sender its outcome', async () => {
     deliveries = 0;
     const p1 = requestPeer(addrB, { t: 'msg', from: 'burst', body: 'one', hop: 0 });
     const p2 = requestPeer(addrB, { t: 'msg', from: 'burst', body: 'two', hop: 0 });
     const [r1, r2] = await Promise.all([p1, p2]);
-    const outcomes = [r1?.outcome, r2?.outcome].sort();
-    assert.deepEqual(outcomes, ['coalesced', 'injected']);
+    assert.deepEqual([r1?.outcome, r2?.outcome], ['injected', 'injected']);
     assert.equal(deliveries, 1);
   });
 
@@ -537,8 +536,7 @@ describe('outbound frame → inbound path', () => {
         requestPeer(addr, { t: 'msg', from: 'hopper', body: 'first', hop: 0 }),
         requestPeer(addr, { t: 'msg', from: 'hopper', body: 'second', hop: 3 }),
       ]);
-      const outcomes = [r1?.outcome, r2?.outcome].sort();
-      assert.deepEqual(outcomes, ['coalesced', 'injected']);
+      assert.deepEqual([r1?.outcome, r2?.outcome], ['injected', 'injected']);
       assert.equal(seen.length, 1);
       assert.equal(seen[0].hop, 3);
     } finally {
@@ -1845,6 +1843,70 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
       handlers['session_shutdown']();
       target.stop();
       await removeOwnRecord(STATE, targetPid);
+    }
+  });
+
+  it("tells a held message's sender at shutdown that it will not be delivered", async () => {
+    // A live pid: the node's own listing reaps records of pids that are gone.
+    const senderPid = process.ppid;
+    const senderAddr = peerSocketAddress(STATE, senderPid);
+    const notices = [];
+    const sender = startPeerServer({
+      address: senderAddr,
+      ownName: () => 'sender',
+      ownId: () => 'sender-inst',
+      onMessage: async (msg) => {
+        notices.push(msg);
+        return 'acked';
+      },
+    });
+    await writePeerBeat({
+      stateDir: STATE,
+      pid: senderPid,
+      name: 'sender',
+      cwd: join(STATE, 'sender'),
+      harness: 'omp',
+      sessionId: 'sid-sender-0001',
+      instanceId: 'sender-inst',
+      socket: senderAddr,
+      startedAt: 1,
+    });
+    const handlers = {};
+    const peersExtension = (await import('../dist/extension.js')).default;
+    peersExtension({
+      registerCommand: () => {},
+      registerTool: () => {},
+      on: (event, handler) => {
+        handlers[event] = handler;
+      },
+      sendUserMessage: () => {},
+    });
+    handlers['session_start'](undefined, {
+      cwd: join(STATE, 'typist'),
+      mode: 'tui',
+      // The user is typing: an idle delivery holds.
+      ui: { notify: () => {}, getEditorText: () => 'half a sentence' },
+      sessionManager: { getSessionId: () => 'sess-typist' },
+      isIdle: () => true,
+    });
+    await new Promise((r) => setTimeout(r, 700));
+    try {
+      const inbound = await requestPeer(peerSocketAddress(STATE, process.pid), {
+        t: 'msg',
+        from: 'sender',
+        fromId: 'sid-sender-0001',
+        body: 'are you there?',
+        hop: 0,
+      });
+      assert.equal(inbound?.outcome, 'held');
+      handlers['session_shutdown']();
+      await new Promise((r) => setTimeout(r, 1000));
+      assert.equal(notices.length, 1);
+      assert.equal(notices[0].ack, true, 'a toast at the sender, not a wake');
+      assert.match(notices[0].body, /not delivered: the peer shut down/);
+    } finally {
+      sender.stop();
+      await removeOwnRecord(STATE, senderPid);
     }
   });
 

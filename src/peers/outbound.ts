@@ -117,6 +117,7 @@ export async function sendToPeer(to: string, message: string, deps: OutboundDeps
     if (!reply.ok) return `Delivery to ${record.name} failed: ${reply.error ?? 'unknown error'}`;
     if (reply.outcome === 'dropped') return `Delivery to ${record.name} failed (dropped by receiver)`;
     if (reply.outcome === 'aside') return `Queued at ${record.name} (wake budget reached — delivers without waking)`;
+    // Receivers before 2.0.0 answer a batch's later members before delivering it.
     if (reply.outcome === 'coalesced')
       return `Delivered to ${record.name} (coalesced into a batch). Its reply will arrive as a peer message.`;
     if (reply.outcome === 'held')
