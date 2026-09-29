@@ -241,10 +241,7 @@ export interface PresenceBeatOptions {
  * Run `tick` immediately and every `intervalMs`. The tick body never throws
  * into the host: failures route to `onError`. Returns a `stop` handle.
  */
-export function startPresenceBeat(
-  tick: () => Promise<void> | void,
-  opts: PresenceBeatOptions = {}
-): { stop(): void } {
+export function startPresenceBeat(tick: () => Promise<void> | void, opts: PresenceBeatOptions = {}): { stop(): void } {
   const intervalMs = opts.intervalMs ?? HEARTBEAT_MS;
   const guarded = (): void => {
     try {

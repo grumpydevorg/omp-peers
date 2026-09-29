@@ -18,4 +18,3 @@ export class PeerNameError extends Error {
     this.name = 'PeerNameError';
   }
 }
-

@@ -42,7 +42,6 @@ export function peerPath(pid: number, stateDir: string = resolveStateDir()): str
   return join(peersDir(stateDir), `${pid}.json`);
 }
 
-
 /** Create the fixed state directory skeleton. Returns the state dir. */
 export async function ensureStateDirs(stateDir: string = resolveStateDir()): Promise<string> {
   await mkdir(stateDir, { recursive: true });

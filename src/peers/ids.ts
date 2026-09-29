@@ -124,9 +124,7 @@ export function peerKey(sessionId: string | undefined, name: string): string {
   return sessionId !== undefined && sessionId !== '' ? sessionId : name.toLowerCase();
 }
 
-export type PeerLookup =
-  | { found: true; record: PeerRecord }
-  | { found: false; reason: string };
+export type PeerLookup = { found: true; record: PeerRecord } | { found: false; reason: string };
 
 /**
  * Resolve an address against live peers, case-insensitively: exact name →

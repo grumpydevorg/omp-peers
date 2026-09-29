@@ -59,11 +59,7 @@ function refusal(hop: number): string {
 }
 
 /** Send one message to the peer named `to`. Never throws. */
-export async function sendToPeer(
-  to: string,
-  message: string,
-  deps: OutboundDeps
-): Promise<string> {
+export async function sendToPeer(to: string, message: string, deps: OutboundDeps): Promise<string> {
   const name = to?.trim() ?? '';
   const body = message?.trim() ?? '';
   if (name === '' || body === '') return 'Both `to` and `message` are required.';
@@ -106,7 +102,8 @@ export async function sendToPeer(
     if (reply.outcome === 'aside') return `Queued at ${record.name} (wake budget reached — delivers without waking)`;
     if (reply.outcome === 'coalesced')
       return `Delivered to ${record.name} (coalesced into a batch). Its reply will arrive as a peer message.`;
-    if (reply.outcome === 'held') return `Held at ${record.name} (typing) — delivers when they submit. Its reply will arrive as a peer message.`;
+    if (reply.outcome === 'held')
+      return `Held at ${record.name} (typing) — delivers when they submit. Its reply will arrive as a peer message.`;
     if (reply.outcome === 'replied') return `Replied to ${record.name}.`;
     if (reply.outcome === 'acked') return `Ack delivered to ${record.name} (toast — no wake, no reply expected).`;
     return `Delivered to ${record.name} (${reply.outcome ?? 'injected'}). Its reply will arrive as a peer message.`;

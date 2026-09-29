@@ -12,15 +12,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import {
-  copyFile,
-  mkdir,
-  open,
-  readFile,
-  readdir,
-  stat,
-  unlink,
-} from 'node:fs/promises';
+import { copyFile, mkdir, open, readFile, readdir, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import { CorruptStateError } from '../errors.js';
@@ -32,12 +24,7 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 const jitter = (): number => 20 + Math.floor(Math.random() * 40);
 
 function hasErrno(err: unknown, code: string): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: unknown }).code === code
-  );
+  return typeof err === 'object' && err !== null && 'code' in err && (err as { code?: unknown }).code === code;
 }
 
 /** Memoized per-process parent-directory creation. */
@@ -73,10 +60,7 @@ export async function readJsonFile<T = unknown>(
       if (hasErrno(err, 'ENOENT')) {
         return undefined;
       }
-      if (
-        (hasErrno(err, 'EPERM') || hasErrno(err, 'EBUSY') || hasErrno(err, 'EACCES')) &&
-        attempt < retries
-      ) {
+      if ((hasErrno(err, 'EPERM') || hasErrno(err, 'EBUSY') || hasErrno(err, 'EACCES')) && attempt < retries) {
         attempt += 1;
         await sleep(retryDelayMs);
         continue;
@@ -140,7 +124,7 @@ export async function durableWriteJson(
   opts: { pretty?: boolean } = {}
 ): Promise<void> {
   await ensureParent(filePath);
-  const text = JSON.stringify(data, null, opts.pretty === false ? undefined : 2) + '\n';
+  const text = `${JSON.stringify(data, null, opts.pretty === false ? undefined : 2)}\n`;
   let attempt = 0;
   for (;;) {
     const sidecar = sidecarPathFor(filePath);
@@ -158,10 +142,7 @@ export async function durableWriteJson(
       return;
     } catch (err) {
       await unlink(sidecar).catch(() => undefined);
-      if (
-        (hasErrno(err, 'EPERM') || hasErrno(err, 'EBUSY') || hasErrno(err, 'EACCES')) &&
-        attempt < 6
-      ) {
+      if ((hasErrno(err, 'EPERM') || hasErrno(err, 'EBUSY') || hasErrno(err, 'EACCES')) && attempt < 6) {
         attempt += 1;
         await sleep(jitter());
         continue;

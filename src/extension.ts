@@ -26,13 +26,7 @@ import { chooseBase, directoryBase, isValidPeerName, peerKey, resolvePeerName } 
 import { createEnvLookups, type EnvLookups } from './peers/context.js';
 import { deliverInboundPeerMessage, HOLD_POLL_MS, MAX_HELD_BATCHES, type HeldBatch } from './peers/inbound.js';
 import { sendToPeer } from './peers/outbound.js';
-import {
-  HEARTBEAT_MS,
-  listLivePeers,
-  removePeerRecord,
-  startPresenceBeat,
-  writePeerBeat,
-} from './peers/presence.js';
+import { HEARTBEAT_MS, listLivePeers, removePeerRecord, startPresenceBeat, writePeerBeat } from './peers/presence.js';
 import { appendNoteToMessages, buildPeersNote } from './peers/roster.js';
 import type { RosterMessage } from './peers/roster.js';
 import { peerSocketAddress, startPeerServer } from './peers/server.js';
@@ -112,7 +106,9 @@ function holdBatch(st: NodeState, msg: InboundMessage): void {
   }
   if (st.holdTimer !== undefined) return;
   st.holdTimer = setInterval(() => {
-    void pumpHeld(st).catch((err: unknown) => logOf(st, `peers: held retry failed: ${err instanceof Error ? err.message : String(err)}`));
+    void pumpHeld(st).catch((err: unknown) =>
+      logOf(st, `peers: held retry failed: ${err instanceof Error ? err.message : String(err)}`)
+    );
   }, HOLD_POLL_MS);
   st.holdTimer.unref?.();
 }
@@ -625,7 +621,9 @@ export default function peersExtension(pi: ExtensionHostLike): void {
       st.nativeActivity = undefined;
       // A todo flip must land before the next 15s beat, not after it.
       if ((event as { toolName?: unknown } | undefined)?.toolName === 'todo') {
-        void tick(st).catch((err: unknown) => logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`));
+        void tick(st).catch((err: unknown) =>
+          logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`)
+        );
       }
     }
   });
@@ -638,7 +636,9 @@ export default function peersExtension(pi: ExtensionHostLike): void {
   pi.on('todo_reminder', () => {
     const st = liveNode();
     if (st === undefined) return;
-    void tick(st).catch((err: unknown) => logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`));
+    void tick(st).catch((err: unknown) =>
+      logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`)
+    );
   });
   pi.on('context', (event, ctx) => {
     const st = ensureNode(pi, ctx);
@@ -647,7 +647,11 @@ export default function peersExtension(pi: ExtensionHostLike): void {
     // building the note — the async re-beat may not have landed yet, and
     // the first prompt after /rename must not show a stale name.
     const cwd = typeof ctx?.cwd === 'string' && ctx.cwd !== '' ? ctx.cwd : process.cwd();
-    assignName(st, currentBase(st, cwd), st.peers.filter((p) => p.pid !== st.pid));
+    assignName(
+      st,
+      currentBase(st, cwd),
+      st.peers.filter((p) => p.pid !== st.pid)
+    );
     // Always inject: the agent learns its OWN peer name here, even solo.
     const others = st.peers.filter((p) => p.pid !== st.pid);
     const note = buildPeersNote(st.name, others);

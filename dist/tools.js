@@ -17,7 +17,7 @@ export function registerPeerSendTool(pi, deps) {
         name: 'peer_send',
         label: 'Peer Send',
         loadMode: 'essential',
-        description: 'Send a message to another live peer instance by name (see `/peers`). Only use when the user explicitly asks for cross-instance contact, or to reply to an inbound peer message — never use peers as subagents on your own. It is delivered as a real prompt: it steers the peer mid-turn or wakes it if idle. Fire-and-forget — the peer\'s reply arrives as a separate peer message.',
+        description: "Send a message to another live peer instance by name (see `/peers`). Only use when the user explicitly asks for cross-instance contact, or to reply to an inbound peer message — never use peers as subagents on your own. It is delivered as a real prompt: it steers the peer mid-turn or wakes it if idle. Fire-and-forget — the peer's reply arrives as a separate peer message.",
         parameters: {
             type: 'object',
             properties: {
@@ -53,7 +53,7 @@ export function registerPeerStatusTool(pi, deps) {
         name: 'peer_status',
         label: 'Peer Status',
         loadMode: 'essential',
-        description: "Check what another live peer is doing: busy/idle, current activity, its native todo list (grouped by phase, newest state), and last heartbeat age. `to` is the peer name from `/peers`.",
+        description: 'Check what another live peer is doing: busy/idle, current activity, its native todo list (grouped by phase, newest state), and last heartbeat age. `to` is the peer name from `/peers`.',
         parameters: {
             type: 'object',
             properties: {
@@ -74,7 +74,9 @@ export function registerPeerStatusTool(pi, deps) {
                 return { content: [{ type: 'text', text: formatPeerStatus(peer, deps.now?.() ?? Date.now()) }] };
             }
             catch (err) {
-                return { content: [{ type: 'text', text: `peer_status failed: ${err instanceof Error ? err.message : String(err)}` }] };
+                return {
+                    content: [{ type: 'text', text: `peer_status failed: ${err instanceof Error ? err.message : String(err)}` }],
+                };
             }
         },
     });
@@ -142,9 +144,7 @@ export function registerPeerRequestTool(pi, deps) {
                     listPeers: deps.listPeers,
                     replyTo,
                 });
-                const queueable = receipt.startsWith('Delivered to') ||
-                    receipt.startsWith('Held at') ||
-                    receipt.startsWith('Queued at');
+                const queueable = receipt.startsWith('Delivered to') || receipt.startsWith('Held at') || receipt.startsWith('Queued at');
                 if (!queueable) {
                     // Not a queueable delivery — e.g. unknown peer, refused, or it
                     // matched a pending request on the far end and was consumed.
@@ -175,7 +175,9 @@ export function registerPeerRequestTool(pi, deps) {
                     const hint = await statusHintFor(to, deps.listPeers, now);
                     return { content: [{ type: 'text', text: `Request to ${to} timed out after ${timeoutMs}ms. ${hint}` }] };
                 }
-                return { content: [{ type: 'text', text: `peer_request failed: ${err instanceof Error ? err.message : String(err)}` }] };
+                return {
+                    content: [{ type: 'text', text: `peer_request failed: ${err instanceof Error ? err.message : String(err)}` }],
+                };
             }
         },
     });
