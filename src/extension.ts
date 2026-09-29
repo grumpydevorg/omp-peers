@@ -19,6 +19,7 @@
  * ignored, so a subagent never becomes the published identity.
  */
 
+import { randomUUID } from 'node:crypto';
 import { registerPeersCommand } from './commands/peers.js';
 import type { CommandContextLike, ExtensionHostLike } from './peers/host.js';
 import { detectHarness, readNativeTodos, readTitleSource } from './peers/host.js';
@@ -43,6 +44,8 @@ const ACTIVITY_FRESH_MS = 120_000;
 interface NodeState {
   stateDir: string;
   pid: number;
+  /** Random id of this node boot: published, answered on ping, checked against every frame's `toId`. */
+  instanceId: string;
   startedAt: number;
   socketAddress: string;
   name: string;
@@ -268,6 +271,7 @@ async function tick(st: NodeState): Promise<void> {
       ...(st.sessionId !== '' ? { sessionId: st.sessionId } : {}),
       ...(model !== '' ? { model } : {}),
       socket: st.socketAddress,
+      instanceId: st.instanceId,
       startedAt: st.startedAt,
       busy,
       ...(activity !== undefined && activity !== '' ? { activity } : {}),
@@ -327,6 +331,7 @@ function ensureNode(pi: ExtensionHostLike, ctx: CommandContextLike): NodeState |
     const st: NodeState = {
       stateDir,
       pid: process.pid,
+      instanceId: randomUUID(),
       startedAt: Date.now(),
       socketAddress: peerSocketAddress(stateDir, process.pid),
       name: '',
@@ -361,6 +366,7 @@ function ensureNode(pi: ExtensionHostLike, ctx: CommandContextLike): NodeState |
         st.server = startPeerServer({
           address: st.socketAddress,
           ownName: () => liveNode()?.name ?? '',
+          ownId: () => st.instanceId,
           onMessage: async (msg) => {
             const live = liveNode();
             const replyTo = msg.replyTo;

@@ -34,24 +34,38 @@ export interface BeatInput {
   base?: string;
   label?: string;
   aliases?: string[];
+  instanceId?: string;
 }
 
-/** Field shape shared by every schema version (version gate lives in isPeerRecord). */
+/** Field shape shared by every schema version (version gate lives in isPeerRecord). Checks every field a reader uses. */
 function hasPeerRecordShape(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return false;
   const r = value as Record<string, unknown>;
+  const optionalString = (key: string): boolean => r[key] === undefined || typeof r[key] === 'string';
   return (
     typeof r['pid'] === 'number' &&
     typeof r['name'] === 'string' &&
     typeof r['cwd'] === 'string' &&
+    typeof r['project'] === 'string' &&
     (r['harness'] === 'omp' || r['harness'] === 'pi') &&
+    typeof r['sessionId'] === 'string' &&
+    typeof r['model'] === 'string' &&
     typeof r['socket'] === 'string' &&
     typeof r['startedAt'] === 'number' &&
     typeof r['beatAt'] === 'number' &&
-    (r['base'] === undefined || typeof r['base'] === 'string') &&
-    (r['label'] === undefined || typeof r['label'] === 'string') &&
+    typeof r['busy'] === 'boolean' &&
+    optionalString('activity') &&
+    optionalString('base') &&
+    optionalString('label') &&
+    optionalString('instanceId') &&
     (r['aliases'] === undefined ||
-      (Array.isArray(r['aliases']) && r['aliases'].every((alias) => typeof alias === 'string')))
+      (Array.isArray(r['aliases']) && r['aliases'].every((alias) => typeof alias === 'string'))) &&
+    (r['todos'] === undefined ||
+      (Array.isArray(r['todos']) &&
+        r['todos'].every(
+          (todo: unknown) =>
+            typeof todo === 'object' && todo !== null && 'text' in todo && typeof todo.text === 'string'
+        )))
   );
 }
 
@@ -94,6 +108,7 @@ export async function writePeerBeat(input: BeatInput): Promise<PeerRecord> {
   if (input.base !== undefined) record.base = input.base;
   if (input.label !== undefined && input.label !== '') record.label = input.label;
   if (input.aliases !== undefined && input.aliases.length > 0) record.aliases = input.aliases;
+  if (input.instanceId !== undefined && input.instanceId !== '') record.instanceId = input.instanceId;
   const file = peerPath(pid, input.stateDir);
   // chmod only on first write — the file keeps its mode across refreshes,
   // so re-chmodding every 15s beat is wasted syscalls.
@@ -159,9 +174,10 @@ export async function listLivePeers(
       continue;
     }
     if (!isPeerRecord(parsed)) {
-      // Forward-compat: a well-shaped record with a newer `v` is skipped,
-      // not unlinked — a future peer owns it. Malformed files get reaped.
-      if (!(hasPeerRecordShape(parsed) && typeof parsed['v'] === 'number' && parsed['v'] > 1)) {
+      // Forward-compat: a record with a newer `v` is skipped, not unlinked —
+      // a future peer owns it and may shape it differently. Malformed files get reaped.
+      const version = typeof parsed === 'object' && parsed !== null && 'v' in parsed ? parsed.v : undefined;
+      if (!(typeof version === 'number' && version > 1)) {
         await rm(file, { force: true }).catch(() => undefined);
       }
       continue;

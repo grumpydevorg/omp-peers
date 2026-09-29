@@ -26,6 +26,7 @@ export interface BeatInput {
     base?: string;
     label?: string;
     aliases?: string[];
+    instanceId?: string;
 }
 /** Write (or refresh) this process's presence record. Owner-only writer. */
 export declare function writePeerBeat(input: BeatInput): Promise<PeerRecord>;

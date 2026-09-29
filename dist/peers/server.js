@@ -25,6 +25,8 @@ export const PEER_REQUEST_TIMEOUT_MS = 8_000;
 export const SOCKET_IDLE_MS = 30_000;
 /** Largest buffered frame per socket before the connection is dropped. */
 export const MAX_FRAME_BYTES = 1_048_576;
+/** Reply error for a message addressed to another instance than the one listening here. */
+export const WRONG_PEER = 'wrong peer';
 /** Where this peer listens (and where others reach it). */
 export function peerSocketAddress(stateDir, pid) {
     if (process.platform === 'win32')
@@ -118,7 +120,13 @@ export function startPeerServer(opts) {
         }
         const frame = checked.frame;
         if (frame.t === 'ping') {
-            reply(socket, { ok: true, name: opts.ownName() });
+            reply(socket, { ok: true, name: opts.ownName(), id: opts.ownId() });
+            return;
+        }
+        // Addressed to another instance (a name that moved, a reused pid): refused
+        // before anything reaches the host, so the sender can re-resolve.
+        if (frame.toId !== undefined && frame.toId !== opts.ownId()) {
+            reply(socket, { ok: false, error: WRONG_PEER });
             return;
         }
         const hop = normalizeHop(frame.hop);
