@@ -64,6 +64,7 @@ const {
   parseMsgArgs,
   registerPeersCommand,
   PEER_ACTIONS,
+  completePeerNames,
   checkFrame,
   peerPath,
   PEER_TTL_MS,
@@ -1558,7 +1559,6 @@ describe('activity, todos, and request/reply tools', () => {
       },
       {
         ownName: () => 'alpha',
-        getHop: (_to) => 0,
         send: async (_to, _message, outDeps) => {
           capturedReplyTo = outDeps.replyTo;
           return 'Delivered to beta (injected). Its reply will arrive as a peer message.';
@@ -1589,7 +1589,6 @@ describe('activity, todos, and request/reply tools', () => {
       },
       {
         ownName: () => 'alpha',
-        getHop: (_to) => 0,
         send: async () => 'Delivered to beta (injected). Its reply will arrive as a peer message.',
         listPeers: async () => [],
         getPendingReplies: () => pendingReplies,
@@ -1735,6 +1734,104 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
     beatAt: Date.now(),
     busy: false,
     ...extra,
+  });
+
+  it('/msg completes other peer names from the typed prefix, then stops', () => {
+    const snap = { ownName: 'alpha', peers: [peerRecord('alpha', 1), peerRecord('beta', 2), peerRecord('Bravo', 3)] };
+    const now = Date.now();
+    assert.deepEqual(
+      completePeerNames('b', snap, now).map((item) => item.value),
+      ['beta ', 'Bravo ']
+    );
+    assert.deepEqual(
+      completePeerNames('', snap, now).map((item) => item.label),
+      ['beta', 'Bravo'],
+      'an empty prefix lists every other peer, never yourself'
+    );
+    assert.equal(completePeerNames('a', snap, now), null, 'your own name is never offered');
+    assert.equal(completePeerNames('beta hi', snap, now), null, 'nothing once the name is typed');
+  });
+
+  it('declares peer_status read-only, leaving the send tools at the default tier', () => {
+    const tools = {};
+    const pi = {
+      registerTool: (def) => {
+        tools[def.name] = def;
+      },
+    };
+    registerPeerStatusTool(pi, { listPeers: async () => [] });
+    registerPeerSendTool(pi, { send: async () => 'ok' });
+    assert.equal(tools['peer_status'].approval, 'read');
+    assert.equal(tools['peer_send'].approval, undefined);
+  });
+
+  it('a typed /msg does not reset a relay chain the agent is carrying', async () => {
+    // The target must be a live pid, or the presence listing reaps it.
+    const targetPid = process.ppid;
+    const targetAddr = peerSocketAddress(STATE, targetPid);
+    const hops = [];
+    const target = startPeerServer({
+      address: targetAddr,
+      ownName: () => 'delta',
+      onMessage: async (msg) => {
+        hops.push(msg.hop);
+        return 'injected';
+      },
+    });
+    await writePeerBeat({
+      stateDir: STATE,
+      pid: targetPid,
+      name: 'delta',
+      cwd: join(STATE, 'd'),
+      harness: 'omp',
+      socket: targetAddr,
+      startedAt: 1,
+    });
+
+    const handlers = {};
+    const tools = {};
+    const peersExtension = (await import('../dist/extension.js')).default;
+    peersExtension({
+      registerCommand: () => {},
+      registerTool: (def) => {
+        tools[def.name] = def;
+      },
+      on: (event, handler) => {
+        handlers[event] = handler;
+      },
+      sendUserMessage: () => {},
+    });
+    handlers['session_start'](undefined, {
+      cwd: join(STATE, 'relayer'),
+      mode: 'tui',
+      ui: { notify: () => {} },
+      sessionManager: { getSessionId: () => 'sess-relayer' },
+      isIdle: () => true,
+    });
+    const ownAddr = peerSocketAddress(STATE, process.pid);
+    await new Promise((r) => setTimeout(r, 700));
+    try {
+      // A relay reaches this agent three hops from its human prompt.
+      const inbound = await requestPeer(ownAddr, {
+        t: 'msg',
+        from: 'relay',
+        fromId: 'sid-relay',
+        body: 'pass it on',
+        hop: 3,
+      });
+      assert.equal(inbound?.outcome, 'woken');
+
+      handlers['input']({ source: 'interactive', text: '/msg someone hi' });
+      await tools['peer_send'].execute('1', { to: 'delta', message: 'onward' });
+      handlers['input']({ source: 'interactive', text: 'a real prompt to this agent' });
+      await tools['peer_send'].execute('2', { to: 'delta', message: 'fresh' });
+      await new Promise((r) => setTimeout(r, 700));
+      assert.deepEqual(hops, [4, 0], 'the /msg kept hop 4; the real prompt started a fresh chain');
+    } finally {
+      handlers['session_shutdown']();
+      target.stop();
+      await removePeerRecord(STATE, targetPid);
+    }
   });
 
   it("labels a human frame as typed by the peer's user, still without authority", async () => {

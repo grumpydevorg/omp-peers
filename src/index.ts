@@ -101,6 +101,7 @@ export {
   type CommandContextLike,
   type ExtensionHostLike,
   type UiLike,
+  type AutocompleteItemLike,
   type SelectOption,
 } from './peers/host.js';
 
@@ -114,6 +115,7 @@ export {
   formatPeersText,
   formatPeerLine,
   parseMsgArgs,
+  completePeerNames,
   registerPeersCommand,
   PEER_ACTIONS,
   type PeersSnapshot,

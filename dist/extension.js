@@ -310,12 +310,12 @@ function ensureNode(pi, ctx) {
                 ownName: () => liveNode()?.name ?? '',
                 onMessage: async (msg) => {
                     const live = liveNode();
-                    if (live !== undefined &&
-                        msg.replyTo !== undefined &&
-                        msg.replyTo !== '' &&
-                        live.pendingReplies.has(msg.replyTo)) {
-                        const entry = live.pendingReplies.get(msg.replyTo);
-                        live.pendingReplies.delete(msg.replyTo);
+                    const replyTo = msg.replyTo;
+                    const entry = live !== undefined && replyTo !== undefined && replyTo !== ''
+                        ? live.pendingReplies.get(replyTo)
+                        : undefined;
+                    if (live !== undefined && replyTo !== undefined && entry !== undefined) {
+                        live.pendingReplies.delete(replyTo);
                         clearTimeout(entry.timer);
                         entry.resolve(msg.body);
                         live.lastInboundPeer = peerKey(msg.fromId, msg.from);
@@ -453,6 +453,12 @@ export default function peersExtension(pi) {
             }
             return { ownName: '', peers: [], held: 0 };
         },
+        cachedSnapshot: () => {
+            const st = liveNode();
+            return st !== undefined
+                ? { ownName: st.name, peers: st.peers, held: st.held.length }
+                : { ownName: '', peers: [] };
+        },
         // Typed by the user, so it starts a fresh chain: hop 0, never a relay.
         sendAsUser: (to, body) => {
             const st = liveNode();
@@ -524,8 +530,13 @@ export default function peersExtension(pi) {
         });
     }
     pi.on('input', (event) => {
-        const source = event?.source;
-        if (source === 'extension')
+        const payload = event;
+        if (payload?.source === 'extension')
+            return;
+        // omp emits `input` before it parses slash commands, so `/msg` or `/peers`
+        // arrives here too. Those don't prompt this agent and must not end a relay
+        // chain it is still carrying.
+        if (typeof payload?.text === 'string' && payload.text.trimStart().startsWith('/'))
             return;
         // A human prompt ends any relay chain: the next send starts at hop 0.
         // (No re-beat here: the context handler builds the roster from the last

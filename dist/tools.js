@@ -9,9 +9,8 @@
  * than through a `write xd://` device.
  */
 import { randomUUID } from 'node:crypto';
-import { formatBeatAge } from './peers/presence.js';
 import { lookupPeer } from './peers/ids.js';
-import { formatPeerStatus } from './peers/status.js';
+import { describePeer, formatPeerStatus } from './peers/status.js';
 export function registerPeerSendTool(pi, deps) {
     pi.registerTool({
         name: 'peer_send',
@@ -53,6 +52,9 @@ export function registerPeerStatusTool(pi, deps) {
         name: 'peer_status',
         label: 'Peer Status',
         loadMode: 'essential',
+        // Reads presence files only. peer_send and peer_request keep the default
+        // `exec` tier on purpose: they start a turn in another agent.
+        approval: 'read',
         description: 'Check what another live peer is doing: busy/idle, current activity, its native todo list (grouped by phase, newest state), and last heartbeat age. `to` is the peer name from `/peers`.',
         parameters: {
             type: 'object',
@@ -87,7 +89,7 @@ async function statusHintFor(to, listPeers, now) {
         if (!found.found)
             return found.reason;
         const peer = found.record;
-        return `\`${peer.name}\` is ${peer.busy ? 'working' : 'idle'} · ${peer.activity ?? 'no activity'} · ${peer.todos?.length ?? 0} todos · beat ${formatBeatAge(peer.beatAt, now)}.`;
+        return `\`${peer.name}\`: ${describePeer(peer, now)}.`;
     }
     catch {
         return 'Use peer_status for details.';
@@ -152,13 +154,13 @@ export function registerPeerRequestTool(pi, deps) {
                     resolve(receipt); // never reject an unawaited promise — unhandledRejection terminates bun (crash 2026-09-22)
                     return { content: [{ type: 'text', text: receipt }] };
                 }
-                if (!pending.has(replyTo)) {
+                const entry = pending.get(replyTo);
+                if (entry === undefined) {
                     // A very fast reply already arrived and resolved before sendToPeer
                     // returned; the promise is already resolved.
                     const body = await promise;
                     return { content: [{ type: 'text', text: `Reply from ${to}: ${body}` }] };
                 }
-                const entry = pending.get(replyTo);
                 entry.timer = setTimeout(() => {
                     if (pending.has(replyTo)) {
                         pending.delete(replyTo);

@@ -28,7 +28,7 @@ export { checkFrame, checkReply } from './peers/wire.js';
 // Peer status text (peer_status and the /peers picker share it).
 export { formatPeerStatus, describePeer, peerActivity, todoSummary } from './peers/status.js';
 // User commands: /peers and /msg.
-export { formatPeersText, formatPeerLine, parseMsgArgs, registerPeersCommand, PEER_ACTIONS, } from './commands/peers.js';
+export { formatPeersText, formatPeerLine, parseMsgArgs, completePeerNames, registerPeersCommand, PEER_ACTIONS, } from './commands/peers.js';
 // Agent tool surface (registered unconditionally in every mode).
 export { registerPeerSendTool, registerPeerStatusTool, registerPeerRequestTool, } from './tools.js';
 // Errors and shared schemas.

@@ -12,7 +12,7 @@
  * marked `human`, so the receiver labels it as typed by this peer's user; it
  * still carries no authority there.
  */
-import type { ExtensionHostLike } from '../peers/host.js';
+import type { AutocompleteItemLike, ExtensionHostLike } from '../peers/host.js';
 import type { PeerRecord } from '../types.js';
 export interface PeersSnapshot {
     ownName: string;
@@ -21,11 +21,24 @@ export interface PeersSnapshot {
     held?: number;
 }
 export interface PeerCommandDeps {
+    /** Fresh snapshot: re-beats first, so it reflects a just-run `/rename`. */
     getSnapshot: () => Promise<PeersSnapshot>;
+    /** The last heartbeat's snapshot, read synchronously (completion runs per keystroke). */
+    cachedSnapshot: () => PeersSnapshot;
     /** Deliver text the user typed; resolves to the human-readable receipt. Never throws. */
     sendAsUser: (to: string, body: string) => Promise<string>;
 }
-/** `backend · omp(1234) · C:\work · model-id · working · beat 3s ago`. */
+/**
+ * `/msg` argument completion: while the first word is being typed, the other
+ * peers whose names start with it (case-insensitive), each inserted with a
+ * trailing space so the message can follow. Nothing once the name is done.
+ */
+export declare function completePeerNames(prefix: string, snap: PeersSnapshot, now: number): AutocompleteItemLike[] | null;
+/**
+ * One text-list row:
+ * `backend (tab api) · omp(1234) · /work · model-id · working · beat 3s ago · fixing login · 2 todos · you`.
+ * The tab, activity, todo count and `you` appear only when they apply.
+ */
 export declare function formatPeerLine(p: PeerRecord, now: number, selfName: string): string;
 export declare function formatPeersText(snap: PeersSnapshot, now: number): string;
 /**
