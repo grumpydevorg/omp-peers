@@ -1,17 +1,19 @@
 /**
- * Windows-safe durability primitives.
+ * Durability primitives.
  *
- * The old plugin died on EPERM races when moving a fresh file over a live one,
- * so this module NEVER moves files over live targets. Target replacement is
- * exclusively the copy-a-sidecar-over-the-target pattern (`copyFile`).
+ * A target is replaced by writing and fsyncing a unique sidecar next to it,
+ * then putting the sidecar in its place:
+ *  - POSIX: `rename` over the target, which is atomic — a reader opens either
+ *    the old file or the new one, never a partial write.
+ *  - Windows: `copyFile` over the target. Renaming over a file another
+ *    process has open fails with EPERM there (the failure the old plugin died
+ *    on), so the copy stays, and a reader can land mid-copy.
  *
- * Conventions:
- *  - Presence files: owner-only writers, no lock, sidecar + copy pattern.
- *  - Readers of any JSON file tolerate a partial read (a copy can be observed
- *    mid-flight) with one bounded retry.
+ * Readers of any JSON file tolerate a partial read (Windows) with one bounded
+ * retry.
  */
 import { randomBytes } from 'node:crypto';
-import { copyFile, mkdir, open, readFile, readdir, stat, unlink } from 'node:fs/promises';
+import { copyFile, mkdir, open, readFile, readdir, rename, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { CorruptStateError } from '../errors.js';
 /** Sidecars older than this are swept after a successful write. */
@@ -102,9 +104,8 @@ async function sweepStaleSidecars(target) {
 }
 /**
  * Durably replace a JSON file: write a unique sidecar next to the target,
- * fsync it, copy it over the target, delete the sidecar. The sidecar never
- * coexists with a move over a live file: the target is replaced in place by
- * the copy, so any reader sees either the old or the new content.
+ * fsync it, then rename it over the target (POSIX, atomic) or copy it over
+ * the target and delete it (Windows). See the module comment.
  */
 export async function durableWriteJson(filePath, data, opts = {}) {
     await ensureParent(filePath);
@@ -121,8 +122,13 @@ export async function durableWriteJson(filePath, data, opts = {}) {
             finally {
                 await fh.close();
             }
-            await copyFile(sidecar, filePath);
-            await unlink(sidecar).catch(() => undefined);
+            if (process.platform === 'win32') {
+                await copyFile(sidecar, filePath);
+                await unlink(sidecar).catch(() => undefined);
+            }
+            else {
+                await rename(sidecar, filePath);
+            }
             await sweepStaleSidecars(filePath);
             return;
         }
