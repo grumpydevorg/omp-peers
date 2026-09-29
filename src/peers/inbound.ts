@@ -63,7 +63,7 @@ export interface InboundDeps {
 }
 
 /** Every injection carries the `[peer <name>]` prefix plus a peer-not-user line. */
-export function formatPeerText(from: string, body: string, opts: { replyTo?: string } = {}): string {
+export function formatPeerText(from: string, body: string, opts: { replyTo?: string | undefined } = {}): string {
   return [
     `[peer ${from}]${opts.replyTo !== undefined && opts.replyTo !== '' ? ` (reply to ${opts.replyTo})` : ''}:`,
     '',

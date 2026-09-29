@@ -74,7 +74,7 @@ export function peerNameFromSession(
   raw: string | undefined,
   cwd: string,
   pid: number,
-  opts: { titleSource?: string } = {}
+  opts: { titleSource?: string | undefined } = {}
 ): { name: string; rejected?: string } {
   // Model-generated titles are never addresses: they express no user intent
   // and the host rewrites them (replan refresh), so adopting one would flap

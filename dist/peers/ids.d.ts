@@ -27,7 +27,7 @@ export declare function defaultPeerName(cwd: string, pid: number): string;
  * collisions still resolve later via {@link resolvePeerName}.
  */
 export declare function peerNameFromSession(raw: string | undefined, cwd: string, pid: number, opts?: {
-    titleSource?: string;
+    titleSource?: string | undefined;
 }): {
     name: string;
     rejected?: string;

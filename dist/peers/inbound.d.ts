@@ -56,7 +56,7 @@ export interface InboundDeps {
 }
 /** Every injection carries the `[peer <name>]` prefix plus a peer-not-user line. */
 export declare function formatPeerText(from: string, body: string, opts?: {
-    replyTo?: string;
+    replyTo?: string | undefined;
 }): string;
 /** True when `from` already consumed its hourly wake budget (prunes first). */
 export declare function isWakeOverBudget(wakes: Map<string, number[]>, from: string, now: number, max?: number): boolean;
