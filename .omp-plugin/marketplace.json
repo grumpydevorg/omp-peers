@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Cross-session peer awareness for omp/pi",
-    "version": "2.0.0-preview.1"
+    "version": "2.0.0-preview.2"
   },
   "plugins": [
     {
       "name": "omp-peers",
       "source": "./",
-      "version": "2.0.0-preview.1",
+      "version": "2.0.0-preview.2",
       "description": "Every running omp/pi instance sees the others by peer name and can prompt them via peer_send.",
       "category": "development",
       "license": "MIT",
