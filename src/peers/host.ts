@@ -51,6 +51,8 @@ export interface CommandContextLike {
   isIdle: () => boolean;
   setInterval?: (callback: () => void, ms?: number) => unknown;
   clearTimer?: (timer: unknown) => void;
+  /** The session's agent identity (omp `ExtensionContext.agent`): `main` for the root, `sub` for a task subagent. */
+  agent?: { kind?: string };
   [key: string]: unknown;
 }
 

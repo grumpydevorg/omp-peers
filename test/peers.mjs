@@ -1330,3 +1330,49 @@ describe('ack-class messages', () => {
 after(async () => {
   await rm(STATE, { recursive: true, force: true });
 });
+
+describe('subagent sessions', () => {
+  it("stay out of the root's lifecycle: a subagent's shutdown leaves the peer listed", async () => {
+    // omp loads the extension once per session: the root and each `task`
+    // subagent get their own instance, sharing this module's node. A
+    // finished subagent is disposed, which fires its session_shutdown.
+    const peersExtension = (await import('../dist/extension.js')).default;
+    const load = () => {
+      const handlers = {};
+      peersExtension({
+        registerCommand: () => {},
+        registerTool: () => {},
+        on: (event, handler) => {
+          handlers[event] = handler;
+        },
+        sendUserMessage: () => {},
+      });
+      return handlers;
+    };
+    const root = load();
+    const sub = load();
+    const record = peerPath(process.pid, STATE);
+    const present = () => stat(record).then(() => true, () => false);
+    root['session_start'](undefined, {
+      cwd: join(STATE, 'with-subagent'),
+      mode: 'tui',
+      ui: { notify: () => {} },
+      sessionManager: { getSessionId: () => 'sess-root' },
+      isIdle: () => true,
+      agent: { kind: 'main' },
+    });
+    for (let i = 0; i < 100 && !(await present()); i += 1) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(await present(), true, 'the root published');
+    try {
+      sub['session_shutdown'](undefined, { agent: { kind: 'sub' } });
+      await new Promise((r) => setTimeout(r, 300));
+      assert.equal(await present(), true, 'a subagent shutdown removed the root peer');
+      const pong = await requestPeer(peerSocketAddress(STATE, process.pid), { t: 'ping', from: 'x' });
+      assert.equal(pong?.ok, true, 'the root peer still answers');
+    } finally {
+      root['session_shutdown'](undefined, { agent: { kind: 'main' } });
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    assert.equal(await present(), false, "the root's shutdown removes it");
+  });
+});

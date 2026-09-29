@@ -464,7 +464,12 @@ export default function peersExtension(pi) {
     pi.on('session_start', (_event, ctx) => {
         ensureNode(pi, ctx);
     });
-    pi.on('session_shutdown', () => {
+    pi.on('session_shutdown', (_event, ctx) => {
+        // omp disposes every finished `task` subagent session, which fires
+        // session_shutdown on that session's own extension instance. Only the
+        // root session's shutdown ends this peer.
+        if (ctx?.agent?.kind === 'sub')
+            return;
         const st = node;
         node = undefined;
         if (st !== undefined)
