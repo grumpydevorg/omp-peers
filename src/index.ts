@@ -54,6 +54,9 @@ export {
   type PresenceBeatOptions,
 } from './peers/presence.js';
 
+// Heartbeat loop (single-flight; stop is final).
+export { createBeatLoop, type BeatLoop } from './peers/beat.js';
+
 // Transport.
 export {
   MAX_HOPS,

@@ -20,6 +20,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { registerPeersCommand } from './commands/peers.js';
+import { createBeatLoop } from './peers/beat.js';
 import { detectHarness, readNativeTodos, readTitleSource } from './peers/host.js';
 import { chooseBase, directoryBase, isValidPeerName, nameRoster, peerKey } from './peers/ids.js';
 import { createEnvLookups } from './peers/context.js';
@@ -236,7 +237,7 @@ function armBeatTimer(st, ctx) {
     const managed = typeof ctx.setInterval === 'function' && typeof ctx.clearTimer === 'function'
         ? { setInterval: ctx.setInterval.bind(ctx), clearTimer: ctx.clearTimer.bind(ctx) }
         : {};
-    st.stopBeat = startPresenceBeat(() => tick(st), {
+    st.stopBeat = startPresenceBeat(() => st.beat.request(), {
         intervalMs: HEARTBEAT_MS,
         onError: (err) => logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`),
         ...managed,
@@ -293,6 +294,7 @@ function ensureNode(pi, ctx) {
             current: { pi, ctx },
             server: undefined,
             stopBeat: undefined,
+            beat: createBeatLoop(() => tick(st), (err) => logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`)),
             lastRejectedSessionName: undefined,
             stopped: false,
             nativeTodos: [],
@@ -354,8 +356,8 @@ function ensureNode(pi, ctx) {
                         warnOf(live, text);
                 },
             });
+            // The timer beats once immediately, then every HEARTBEAT_MS.
             armBeatTimer(st, ctx);
-            void tick(st);
         })
             .catch((err) => {
             try {
@@ -394,6 +396,9 @@ async function stopNode(st) {
         // Shutdown never throws.
     }
     st.stopBeat = undefined;
+    // The beat in flight finishes before the record is unlinked below, and no
+    // beat starts after this: a stopped node is never written back.
+    await st.beat.stop();
     if (st.holdTimer !== undefined) {
         try {
             clearInterval(st.holdTimer);
@@ -446,13 +451,8 @@ export default function peersExtension(pi) {
             const st = liveNode();
             if (st !== undefined) {
                 // Fresh beat before rendering: a just-run /rename must be visible
-                // immediately, not on the next 15s tick. tick() owns its failures.
-                try {
-                    await tick(st);
-                }
-                catch {
-                    // Snapshot stays last-good.
-                }
+                // immediately, not on the next 15s tick. The loop owns its failures.
+                await st.beat.request();
                 return { ownName: st.name, peers: st.peers, held: st.held.length };
             }
             return { ownName: '', peers: [], held: 0 };
@@ -593,7 +593,7 @@ export default function peersExtension(pi) {
             st.nativeActivity = undefined;
             // A todo flip must land before the next 15s beat, not after it.
             if (event?.toolName === 'todo') {
-                void tick(st).catch((err) => logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`));
+                void st.beat.request();
             }
         }
     });
@@ -608,7 +608,7 @@ export default function peersExtension(pi) {
         const st = liveNode();
         if (st === undefined)
             return;
-        void tick(st).catch((err) => logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`));
+        void st.beat.request();
     });
     pi.on('context', (event, ctx) => {
         const st = ensureNode(pi, ctx);
