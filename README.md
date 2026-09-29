@@ -2,6 +2,8 @@
 
 **Cross-instance messaging for [Oh My Pi](https://github.com/can1357/oh-my-pi) and pi** — every running agent session on a machine sees every other, live, by name, and can message it. omp's own IRC (`write agent://…`) only reaches agents inside one process; omp-peers connects separate omp instances.
 
+> **Preview of a proposed omp-peers 2.0.0**, published from [grumpydevorg/omp-peers](https://github.com/grumpydevorg/omp-peers) while the changes are offered upstream as pull requests to [nikkoxgonzales/omp-peers](https://github.com/nikkoxgonzales/omp-peers).
+
 This builds on omp-peers 1.4.0 with the fixes and features listed under [Changes since 1.4.0](#changes-since-140); they were developed as the omp-irc fork and are carried here commit by commit. Next on the roadmap are durable message receipts, channels, and addressable subagents.
 
 ```text
@@ -64,14 +66,14 @@ Requirements: Node.js 22+, and omp (`@oh-my-pi/pi-coding-agent`) 18.1.x or later
 **Marketplace (recommended — enables updates via `omp plugin upgrade omp-peers@omp-peers`):**
 
 ```sh
-omp plugin marketplace add nikkoxgonzales/omp-peers
+omp plugin marketplace add grumpydevorg/omp-peers
 omp plugin install omp-peers@omp-peers
 ```
 
 **Direct from GitHub:**
 
 ```sh
-omp plugin install github:nikkoxgonzales/omp-peers
+omp plugin install github:grumpydevorg/omp-peers
 ```
 
 Then restart omp. Verify with `/peers` — you should see yourself listed. It reads 1.4.0 peers' records and messages them; see [Changes since 1.4.0](#changes-since-140) for what differs.
