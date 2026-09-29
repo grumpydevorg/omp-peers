@@ -1,6 +1,6 @@
 {
   "name": "omp-peers",
-  "version": "1.4.1",
+  "version": "2.0.0-preview.1",
   "description": "Claude-Code-style cross-session peer awareness for Oh My Pi (omp) and pi: every running instance sees every other, live, on the same machine — /peers to list, /rename to name, peer_send to talk.",
   "type": "module",
   "main": "./dist/index.js",
@@ -46,7 +46,7 @@
   "author": "Nikko Gonzales <nikkoxgonzales@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nikkoxgonzales/omp-peers.git"
+    "url": "git+https://github.com/grumpydevorg/omp-peers.git"
   },
   "license": "MIT",
   "devDependencies": {
@@ -54,5 +54,13 @@
     "@types/node": "^26.5.0",
     "fast-check": "4.10.2",
     "typescript": "^7.0.2"
-  }
+  },
+  "homepage": "https://github.com/grumpydevorg/omp-peers#readme",
+  "bugs": {
+    "url": "https://github.com/grumpydevorg/omp-peers/issues"
+  },
+  "contributors": [
+    "Rick Morgans <rick.morgans@supersensory.com.au>",
+    "hezirel (https://github.com/hezirel)"
+  ]
 }
