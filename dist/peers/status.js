@@ -66,7 +66,7 @@ export function todoSummary(todos) {
 export function formatPeerStatus(peer, now) {
     const tab = peer.label !== undefined ? ` (herdr tab \`${peer.label}\`)` : '';
     const lines = [
-        `\`${peer.name}\`${tab} is ${peer.busy ? 'working' : 'idle'} in ${peer.cwd} · beat ${formatBeatAge(peer.beatAt, now)}.`,
+        `\`${peer.name}\`${tab} ${peer.left !== undefined ? `left the peer list at ${new Date(peer.left).toTimeString().slice(0, 5)}; it was last` : 'is'} ${peer.busy ? 'working' : 'idle'} in ${peer.cwd} · beat ${formatBeatAge(peer.beatAt, now)}.`,
         `Activity: ${peerActivity(peer) ?? '—'}`,
     ];
     if (peer.todos !== undefined && peer.todos.length > 0)
@@ -78,7 +78,7 @@ export function formatPeerStatus(peer, now) {
 /** One line under a picker row: state · activity · todos · herdr tab · beat · cwd. */
 export function describePeer(peer, now) {
     return [
-        peer.busy ? 'working' : 'idle',
+        peer.left !== undefined ? 'left' : peer.busy ? 'working' : 'idle',
         peerActivity(peer),
         todoSummary(peer.todos),
         peer.label !== undefined ? `herdr tab ${peer.label}` : undefined,

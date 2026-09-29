@@ -18,14 +18,14 @@ export { writePeerBeat, listLivePeers, reapPeer, removeOwnRecord, startPresenceB
 export { createBeatLoop } from './peers/beat.js';
 export { createHeldQueue } from './peers/held.js';
 // Transport.
-export { MAX_HOPS, COALESCE_MS, PEER_REQUEST_TIMEOUT_MS, SOCKET_IDLE_MS, MAX_FRAME_BYTES, peerSocketAddress, startPeerServer, requestPeer, } from './peers/server.js';
+export { MAX_HOPS, COALESCE_MS, PEER_REQUEST_TIMEOUT_MS, SOCKET_IDLE_MS, MAX_FRAME_BYTES, WRONG_PEER, LEFT, peerSocketAddress, startPeerServer, requestPeer, } from './peers/server.js';
 // Delivery.
 export { deliverInboundPeerMessage, formatPeerText, isWakeOverBudget, recordPeerWake, MAX_WAKES_PER_PEER_PER_HOUR, WAKE_WINDOW_MS, HOLD_TIMEOUT_MS, MAX_HELD_BATCHES, HOLD_POLL_MS, } from './peers/inbound.js';
 export { sendToPeer, outboundHop } from './peers/outbound.js';
 // Roster.
 export { buildPeersNote, appendNoteToMessages, } from './peers/roster.js';
 // Host seam.
-export { detectHarness, readTitleSource, readNativeTodos, MAX_PEER_TODOS, MAX_PEER_TODO_TEXT_CHARS, } from './peers/host.js';
+export { detectHarness, readTitleSource, readNativeTodos, readLeft, PRESENCE_ENTRY, MAX_PEER_TODOS, MAX_PEER_TODO_TEXT_CHARS, } from './peers/host.js';
 // Socket input checks.
 export { checkFrame, checkReply } from './peers/wire.js';
 // Peer status text (peer_status and the /peers picker share it).

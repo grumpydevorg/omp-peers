@@ -6,6 +6,8 @@
  * named in the title, not offered as a row — and picking one opens an action
  * menu: Message, Status, Hand to my agent. No UI module is ever imported; the
  * primitives are probed on the live ctx and called as receiver methods.
+ * `/peers leave` and `/peers join` take this session out of the peer list and
+ * back; the choice is saved with the session.
  *
  * `/msg <peer> <text>` and the Message action send text the user typed
  * straight to the peer, without a turn of this session's agent. The frame is
@@ -19,6 +21,8 @@ export interface PeersSnapshot {
     peers: PeerRecord[];
     /** Batches held while the peer types — shown so held mail is visible. */
     held?: number;
+    /** When this session left the peer list; absent while it is in it. */
+    left?: number;
 }
 export interface PeerCommandDeps {
     /** Fresh snapshot: re-beats first, so it reflects a just-run `/rename`. */
@@ -27,6 +31,9 @@ export interface PeerCommandDeps {
     cachedSnapshot: () => PeersSnapshot;
     /** Deliver text the user typed; resolves to the human-readable receipt. Never throws. */
     sendAsUser: (to: string, body: string) => Promise<string>;
+    /** Leave or rejoin the peer list; resolves to what to tell the user. */
+    leave: () => Promise<string>;
+    join: () => Promise<string>;
 }
 /**
  * `/msg` argument completion: while the first word is being typed, the other

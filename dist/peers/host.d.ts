@@ -97,6 +97,8 @@ export interface ExtensionHostLike {
         deliverAs?: 'steer' | 'followUp' | 'aside';
         attribution?: 'user' | 'agent';
     }) => void | Promise<void>;
+    /** Persist a custom entry in the current session (omp `pi.appendEntry`); read back from `getBranch`. */
+    appendEntry?: (customType: string, data: unknown) => void;
     getSessionName?: () => string | undefined;
     logger?: {
         warn(message: string): void;
@@ -126,3 +128,11 @@ export declare const MAX_PEER_TODO_TEXT_CHARS = 200;
  * `todo` toolResult. Never throws — a host without the surface reads as [].
  */
 export declare function readNativeTodos(manager: SessionManagerLike | undefined | null): PeerTodo[];
+/** Session entry type recording that this session left or rejoined the peer list. */
+export declare const PRESENCE_ENTRY = "omp-peers.presence";
+/**
+ * When this session left the peer list, or undefined when it is in it: the
+ * newest `omp-peers.presence` entry on the active branch wins. A session that
+ * never left, or a host without session entries, is in the peer list.
+ */
+export declare function readLeft(manager: SessionManagerLike | undefined | null): number | undefined;

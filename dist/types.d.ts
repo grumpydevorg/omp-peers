@@ -73,6 +73,11 @@ export interface PeerRecord {
      * records from 1.4.0 and older.
      */
     instanceId?: string;
+    /**
+     * When the peer left the peer list (`/peers leave`), epoch ms. A left peer
+     * keeps its name and answers pings, but refuses every message with `left`.
+     */
+    left?: number;
 }
 /**
  * Frame exchanged over a peer socket, one JSON object per line. `human` marks

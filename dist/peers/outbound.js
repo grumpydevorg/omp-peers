@@ -6,7 +6,7 @@
  * send re-resolves once. A socket that closes without a reply hands the
  * record to `reap`, which removes it only when its instance is confirmed dead.
  */
-import { MAX_HOPS, requestPeer, WRONG_PEER } from './server.js';
+import { LEFT, MAX_HOPS, requestPeer, WRONG_PEER } from './server.js';
 import { lookupPeer, peerKey } from './ids.js';
 /**
  * The hop an outbound send from `st` must carry.
@@ -24,6 +24,11 @@ export function outboundHop(st, to, isReply) {
     if (isReply || to === st.lastInboundPeer)
         return st.lastInboundHop;
     return st.lastInboundHop + 1;
+}
+/** A peer that left the peer list receives nothing; say so, and when (local HH:MM). */
+function leftReceipt(name, at) {
+    const time = new Date(at).toTimeString().slice(0, 5);
+    return `Not delivered: \`${name}\` left the peer list at ${time} and is not receiving messages. Its user can rejoin with \`/peers join\`.`;
 }
 function refusal(hop) {
     return `Refused: this message is ${hop} hops from a human prompt and the limit is ${MAX_HOPS}. The chain has to end here — do not resend. Ask your user if it must continue.`;
@@ -45,6 +50,8 @@ export async function sendToPeer(to, message, deps) {
         if (!found.found)
             return found.reason;
         let record = found.record;
+        if (record.left !== undefined)
+            return leftReceipt(record.name, record.left);
         const hop = deps.hop ??
             (deps.state !== undefined
                 ? outboundHop(deps.state, peerKey(record.sessionId, record.name), deps.isReply === true)
@@ -90,6 +97,8 @@ export async function sendToPeer(to, message, deps) {
             }
             return `No response from ${record.name} (socket closed).`;
         }
+        if (!reply.ok && reply.error === LEFT)
+            return leftReceipt(record.name, Date.now());
         if (!reply.ok)
             return `Delivery to ${record.name} failed: ${reply.error ?? 'unknown error'}`;
         if (reply.outcome === 'dropped')

@@ -38,6 +38,7 @@ function hasPeerRecordShape(value) {
         optionalString('base') &&
         optionalString('label') &&
         optionalString('instanceId') &&
+        (r['left'] === undefined || typeof r['left'] === 'number') &&
         (r['aliases'] === undefined ||
             (Array.isArray(r['aliases']) && r['aliases'].every((alias) => typeof alias === 'string'))) &&
         (r['todos'] === undefined ||
@@ -145,6 +146,8 @@ export async function writePeerBeat(input) {
         record.aliases = input.aliases;
     if (input.instanceId !== undefined && input.instanceId !== '')
         record.instanceId = input.instanceId;
+    if (input.left !== undefined)
+        record.left = input.left;
     const file = peerPath(pid, input.stateDir);
     // chmod only on first write — the file keeps its mode across refreshes,
     // so re-chmodding every 15s beat is wasted syscalls.

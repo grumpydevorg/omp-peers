@@ -30,6 +30,8 @@ export interface BeatInput {
     label?: string;
     aliases?: string[];
     instanceId?: string;
+    /** Set while the owner has left the peer list (`/peers leave`). */
+    left?: number;
 }
 /** What an observer can prove about a record's instance. `unknown` never justifies a delete. */
 export type Liveness = 'alive' | 'dead' | 'unknown';

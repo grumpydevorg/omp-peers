@@ -24,6 +24,8 @@ export declare const SOCKET_IDLE_MS = 30000;
 export declare const MAX_FRAME_BYTES = 1048576;
 /** Reply error for a message addressed to another instance than the one listening here. */
 export declare const WRONG_PEER = "wrong peer";
+/** Reply error from a node that has left the peer list. */
+export declare const LEFT = "left";
 /** Where this peer listens (and where others reach it). */
 export declare function peerSocketAddress(stateDir: string, pid: number): string;
 export interface InboundMessage {
@@ -44,6 +46,13 @@ export interface PeerServerOptions {
     /** This node boot's `instanceId`: pings answer with it, and a message addressed to another id is refused. */
     ownId: () => string;
     onMessage: (msg: InboundMessage) => Promise<string>;
+    /**
+     * A reason to turn every message away (the node left the peer list), or
+     * undefined. Checked when a frame arrives and again just before a batch
+     * reaches the host, so a message accepted into the coalesce window before
+     * a leave is refused too. Pings are still answered.
+     */
+    refuse?: () => string | undefined;
     onWarn?: (message: string) => void;
     coalesceMs?: number;
 }

@@ -32,6 +32,8 @@ export const SOCKET_IDLE_MS = 30_000;
 export const MAX_FRAME_BYTES = 1_048_576;
 /** Reply error for a message addressed to another instance than the one listening here. */
 export const WRONG_PEER = 'wrong peer';
+/** Reply error from a node that has left the peer list. */
+export const LEFT = 'left';
 
 /** Where this peer listens (and where others reach it). */
 export function peerSocketAddress(stateDir: string, pid: number): string {
@@ -58,6 +60,13 @@ export interface PeerServerOptions {
   /** This node boot's `instanceId`: pings answer with it, and a message addressed to another id is refused. */
   ownId: () => string;
   onMessage: (msg: InboundMessage) => Promise<string>;
+  /**
+   * A reason to turn every message away (the node left the peer list), or
+   * undefined. Checked when a frame arrives and again just before a batch
+   * reaches the host, so a message accepted into the coalesce window before
+   * a leave is refused too. Pings are still answered.
+   */
+  refuse?: () => string | undefined;
   onWarn?: (message: string) => void;
   coalesceMs?: number;
 }
@@ -122,6 +131,11 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
     const batch = pending.get(key);
     pending.delete(key);
     if (batch === undefined) return;
+    const refused = opts.refuse?.();
+    if (refused !== undefined) {
+      for (const member of batch.members) reply(member, { ok: false, error: refused });
+      return;
+    }
     const bodies = batch.bodies.length > 0 ? batch.bodies : [''];
     const body =
       bodies.length === 1
@@ -181,6 +195,11 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
     // before anything reaches the host, so the sender can re-resolve.
     if (frame.toId !== undefined && frame.toId !== opts.ownId()) {
       reply(socket, { ok: false, error: WRONG_PEER });
+      return;
+    }
+    const refused = opts.refuse?.();
+    if (refused !== undefined) {
+      reply(socket, { ok: false, error: refused });
       return;
     }
     const hop = normalizeHop(frame.hop);
