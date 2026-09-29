@@ -64,6 +64,12 @@ export interface PeerServerOptions {
 
 export interface PeerServerHandle {
   address: string;
+  /**
+   * Settles `true` once the socket accepts connections, `false` if listening
+   * failed or the server stopped first. Publish the address only after `true`:
+   * a record pointing at a socket not yet listening turns sends away.
+   */
+  listening: Promise<boolean>;
   /** `unlinkSocket: false` leaves the unix socket path for a successor node. */
   stop(opts?: { unlinkSocket?: boolean }): void;
 }
@@ -279,7 +285,14 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
   }
 
   server = createServer(accept);
+  let settleListening: (ok: boolean) => void = () => undefined;
+  const listening = new Promise<boolean>((resolve) => {
+    settleListening = resolve;
+  });
+  server.once('listening', () => settleListening(true));
   server.on('error', (err: unknown) => {
+    // Before 'listening', an error is a failed listen (EADDRINUSE, EACCES).
+    settleListening(false);
     try {
       opts.onWarn?.(`peers: server error: ${err instanceof Error ? err.message : String(err)}`);
     } catch {
@@ -293,8 +306,13 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
       if (process.platform !== 'win32') {
         await rm(address, { force: true }).catch(() => undefined);
       }
-      server?.listen(address);
+      if (stopped || server === undefined) {
+        settleListening(false);
+        return;
+      }
+      server.listen(address);
     } catch (err) {
+      settleListening(false);
       try {
         opts.onWarn?.(`peers: failed to listen on ${address}: ${err instanceof Error ? err.message : String(err)}`);
       } catch {
@@ -305,8 +323,10 @@ export function startPeerServer(opts: PeerServerOptions): PeerServerHandle {
 
   return {
     address,
+    listening,
     stop: (stopOpts?: { unlinkSocket?: boolean }): void => {
       stopped = true;
+      settleListening(false);
       try {
         server?.close();
       } catch {

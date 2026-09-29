@@ -237,7 +237,14 @@ export function startPeerServer(opts) {
         });
     }
     server = createServer(accept);
+    let settleListening = () => undefined;
+    const listening = new Promise((resolve) => {
+        settleListening = resolve;
+    });
+    server.once('listening', () => settleListening(true));
     server.on('error', (err) => {
+        // Before 'listening', an error is a failed listen (EADDRINUSE, EACCES).
+        settleListening(false);
         try {
             opts.onWarn?.(`peers: server error: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -252,9 +259,14 @@ export function startPeerServer(opts) {
             if (process.platform !== 'win32') {
                 await rm(address, { force: true }).catch(() => undefined);
             }
-            server?.listen(address);
+            if (stopped || server === undefined) {
+                settleListening(false);
+                return;
+            }
+            server.listen(address);
         }
         catch (err) {
+            settleListening(false);
             try {
                 opts.onWarn?.(`peers: failed to listen on ${address}: ${err instanceof Error ? err.message : String(err)}`);
             }
@@ -265,8 +277,10 @@ export function startPeerServer(opts) {
     })();
     return {
         address,
+        listening,
         stop: (stopOpts) => {
             stopped = true;
+            settleListening(false);
             try {
                 server?.close();
             }

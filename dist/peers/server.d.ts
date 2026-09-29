@@ -49,6 +49,12 @@ export interface PeerServerOptions {
 }
 export interface PeerServerHandle {
     address: string;
+    /**
+     * Settles `true` once the socket accepts connections, `false` if listening
+     * failed or the server stopped first. Publish the address only after `true`:
+     * a record pointing at a socket not yet listening turns sends away.
+     */
+    listening: Promise<boolean>;
     /** `unlinkSocket: false` leaves the unix socket path for a successor node. */
     stop(opts?: {
         unlinkSocket?: boolean;

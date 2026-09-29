@@ -274,7 +274,7 @@ function ensureNode(pi, ctx) {
         catch {
             sessionId = '';
         }
-        if (sessionId !== '' && sessionId !== existing.sessionId)
+        if (existing.listening && sessionId !== '' && sessionId !== existing.sessionId)
             armBeatTimer(existing, ctx);
         return existing;
     }
@@ -307,8 +307,9 @@ function ensureNode(pi, ctx) {
             current: { pi, ctx },
             server: undefined,
             stopBeat: undefined,
-            beat: createBeatLoop(() => tick(st), (err) => logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`)),
+            beat: createBeatLoop(() => (st.listening ? tick(st) : Promise.resolve()), (err) => logOf(st, `peers: tick failed: ${err instanceof Error ? err.message : String(err)}`)),
             lastRejectedSessionName: undefined,
+            listening: false,
             stopped: false,
             nativeTodos: [],
             nativeActivity: undefined,
@@ -369,7 +370,18 @@ function ensureNode(pi, ctx) {
                         warnOf(live, text);
                 },
             });
-            // The timer beats once immediately, then every HEARTBEAT_MS.
+            return st.server.listening;
+        })
+            .then((listening) => {
+            if (st.stopped)
+                return;
+            if (!listening) {
+                warnOf(st, 'peers: could not listen on the peer socket — not joining the peer list');
+                return;
+            }
+            // Published only now: a record whose socket is not yet listening turns
+            // sends away. The timer beats once immediately, then every HEARTBEAT_MS.
+            st.listening = true;
             armBeatTimer(st, ctx);
         })
             .catch((err) => {

@@ -10,6 +10,7 @@
  *      receipt never claims more than that end.
  * I6 — a reader never sees a torn presence record while its owner rewrites it
  *      (POSIX; Windows copies over the target and relies on a read retry).
+ * I7 — a node's record appears only once its socket accepts connections.
  */
 
 import assert from 'node:assert/strict';
@@ -477,5 +478,74 @@ describe('I6: a record is replaced atomically', { skip: process.platform === 'wi
     await writer;
     assert.ok(reads > 100, `only ${reads} reads raced the writer`);
     assert.deepEqual(torn, [], `${torn.length} of ${reads} reads were torn`);
+  });
+});
+
+describe('I7: a record is published only once its socket listens', () => {
+  it('listening settles true exactly when the socket accepts, false on a failed or aborted listen', async () => {
+    const ok = startPeerServer({
+      address: peerSocketAddress(STATE, 48500),
+      ownName: () => 'l',
+      ownId: () => 'l-id',
+      onMessage: async () => 'injected',
+    });
+    assert.equal(await ok.listening, true);
+    assert.equal((await requestPeer(ok.address, { t: 'ping', from: 'x' }))?.ok, true);
+    ok.stop();
+    const aborted = startPeerServer({
+      address: peerSocketAddress(STATE, 48501),
+      ownName: () => 'a',
+      ownId: () => 'a-id',
+      onMessage: async () => 'injected',
+    });
+    aborted.stop();
+    assert.equal(await aborted.listening, false);
+    if (process.platform !== 'win32') {
+      const failed = startPeerServer({
+        address: join(STATE, 'no-such-dir', 'x.sock'),
+        ownName: () => 'f',
+        ownId: () => 'f-id',
+        onMessage: async () => 'injected',
+      });
+      assert.equal(await failed.listening, false);
+      failed.stop();
+    }
+  });
+
+  it('the first record a booting node writes points at a socket that answers', async () => {
+    process.env.OMP_PEERS_DIR = STATE;
+    const record = join(STATE, 'peers', `${process.pid}.json`);
+    const handlers = {};
+    const peersExtension = (await import('../dist/extension.js')).default;
+    peersExtension({
+      registerCommand: () => {},
+      registerTool: () => {},
+      on: (event, handler) => {
+        handlers[event] = handler;
+      },
+      sendUserMessage: () => {},
+    });
+    handlers['session_start'](undefined, {
+      cwd: join(STATE, 'booting'),
+      mode: 'tui',
+      ui: { notify: () => {} },
+      sessionManager: { getSessionId: () => 'sess-booting' },
+      isIdle: () => true,
+    });
+    // A beat requested during boot, as /peers or a todo hook would.
+    handlers['todo_reminder']();
+    try {
+      let seen;
+      for (let i = 0; i < 2000 && seen === undefined; i += 1) {
+        seen = await readFile(record, 'utf8').then(JSON.parse, () => undefined);
+        if (seen === undefined) await new Promise((r) => setImmediate(r));
+      }
+      assert.ok(seen !== undefined, 'the node never published');
+      const pong = await requestPeer(seen.socket, { t: 'ping', from: 'x' });
+      assert.deepEqual(pong, { ok: true, name: seen.name, id: seen.instanceId });
+    } finally {
+      handlers['session_shutdown']();
+      await new Promise((r) => setTimeout(r, 200));
+    }
   });
 });
