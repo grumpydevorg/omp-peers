@@ -14,7 +14,26 @@
  */
 import { formatBeatAge } from '../peers/presence.js';
 import { describePeer, formatPeerStatus, peerActivity } from '../peers/status.js';
-/** `backend · omp(1234) · C:\work · model-id · working · beat 3s ago`. */
+/**
+ * `/msg` argument completion: while the first word is being typed, the other
+ * peers whose names start with it (case-insensitive), each inserted with a
+ * trailing space so the message can follow. Nothing once the name is done.
+ */
+export function completePeerNames(prefix, snap, now) {
+    if (/\s/.test(prefix))
+        return null;
+    const typed = prefix.toLowerCase();
+    const matches = snap.peers
+        .filter((p) => p.name !== snap.ownName && p.name.toLowerCase().startsWith(typed))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((p) => ({ value: `${p.name} `, label: p.name, description: describePeer(p, now) }));
+    return matches.length > 0 ? matches : null;
+}
+/**
+ * One text-list row:
+ * `backend (tab api) · omp(1234) · /work · model-id · working · beat 3s ago · fixing login · 2 todos · you`.
+ * The tab, activity, todo count and `you` appear only when they apply.
+ */
 export function formatPeerLine(p, now, selfName) {
     const self = p.name === selfName ? ' · you' : '';
     const tab = p.label !== undefined ? ` (tab ${p.label})` : '';
@@ -137,6 +156,14 @@ export function registerPeersCommand(pi, deps) {
     });
     pi.registerCommand('msg', {
         description: 'Send a message you type to a peer: /msg <peer> <text>',
+        getArgumentCompletions: (prefix) => {
+            try {
+                return completePeerNames(prefix, deps.cachedSnapshot(), Date.now());
+            }
+            catch {
+                return null; // Completion is best-effort; it must never break typing.
+            }
+        },
         handler: async (args, ctx) => {
             try {
                 const parsed = parseMsgArgs(args);

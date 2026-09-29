@@ -61,11 +61,24 @@ export interface ToolInvokeResult {
   details?: unknown;
 }
 
+/** One slash-command argument suggestion (omp `AutocompleteItem`, pi-tui). */
+export interface AutocompleteItemLike {
+  /** Replaces the typed argument prefix when chosen. */
+  value: string;
+  label: string;
+  description?: string;
+}
+
 export interface ExtensionHostLike {
   on(event: string, handler: (event: unknown, ctx: CommandContextLike) => unknown): void;
   registerCommand(
     name: string,
-    opts: { description?: string; handler: (args: string, ctx: CommandContextLike) => unknown }
+    opts: {
+      description?: string;
+      /** Synchronous: the TUI calls it on every keystroke. `null` means no suggestions. */
+      getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItemLike[] | null;
+      handler: (args: string, ctx: CommandContextLike) => unknown;
+    }
   ): void;
   registerTool(tool: {
     name: string;
@@ -77,6 +90,11 @@ export interface ExtensionHostLike {
      * rather than as direct tools; `essential` keeps them callable by name.
      */
     loadMode?: 'essential' | 'discoverable';
+    /**
+     * omp's approval tier; omitted means `exec`, which prompts under the
+     * `write` and `always-ask` approval modes. Read-only tools say `read`.
+     */
+    approval?: 'read' | 'write' | 'exec';
     execute: (toolCallId: string, params: Record<string, unknown>, signal?: AbortSignal) => Promise<ToolInvokeResult>;
   }): void;
   sendUserMessage?: (

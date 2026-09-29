@@ -201,7 +201,9 @@ export async function deliverInboundPeerMessage(
     return { outcome: 'held', detail: 'peer is typing' };
   }
   try {
-    // `agent` attribution: a peer's words must never carry the user's authority.
+    // `agent` attribution is omp's billing/cache flag, not a role: the model
+    // still reads a user-role message, so formatPeerText's closing line is
+    // what tells it a peer, not its user, is speaking.
     await cur.pi.sendUserMessage(text, { attribution: 'agent' });
     if (willWake) recordPeerWake(wakes, wakeKey, now);
     return { outcome: willWake ? 'woken' : 'injected' };
