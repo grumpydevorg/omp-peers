@@ -27,7 +27,14 @@ import { chooseBase, directoryBase, isValidPeerName, nameRoster, peerKey } from 
 import { createEnvLookups, type EnvLookups } from './peers/context.js';
 import { deliverInboundPeerMessage, HOLD_POLL_MS, MAX_HELD_BATCHES, type HeldBatch } from './peers/inbound.js';
 import { sendToPeer } from './peers/outbound.js';
-import { HEARTBEAT_MS, listLivePeers, removePeerRecord, startPresenceBeat, writePeerBeat } from './peers/presence.js';
+import {
+  HEARTBEAT_MS,
+  listLivePeers,
+  reapPeer,
+  removeOwnRecord,
+  startPresenceBeat,
+  writePeerBeat,
+} from './peers/presence.js';
 import { appendNoteToMessages, buildPeersNote } from './peers/roster.js';
 import type { RosterMessage } from './peers/roster.js';
 import { peerSocketAddress, startPeerServer } from './peers/server.js';
@@ -469,7 +476,7 @@ async function stopNode(st: NodeState): Promise<void> {
   st.server = undefined;
   if (hasSuccessor()) return;
   try {
-    await removePeerRecord(st.stateDir, st.pid);
+    await removeOwnRecord(st.stateDir, st.pid);
   } catch {
     // Final unlink is best-effort.
   }
@@ -519,7 +526,7 @@ export default function peersExtension(pi: ExtensionHostLike): void {
         human: true,
         listPeers: freshPeers,
         reap: (record) => {
-          if (st !== undefined) void removePeerRecord(st.stateDir, record.pid);
+          if (st !== undefined) void reapPeer(st.stateDir, record);
         },
       });
     },
@@ -536,7 +543,7 @@ export default function peersExtension(pi: ExtensionHostLike): void {
         ...(replyTo !== undefined ? { replyTo } : {}),
         ...(ack ? { ack: true } : {}),
         reap: (record) => {
-          if (st !== undefined) void removePeerRecord(st.stateDir, record.pid);
+          if (st !== undefined) void reapPeer(st.stateDir, record);
         },
       });
     },
@@ -558,7 +565,7 @@ export default function peersExtension(pi: ExtensionHostLike): void {
               state: st,
               ownId: st.sessionId,
               reap: (record) => {
-                void removePeerRecord(st.stateDir, record.pid);
+                void reapPeer(st.stateDir, record);
               },
             }
           : {}),

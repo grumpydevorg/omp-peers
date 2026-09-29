@@ -42,13 +42,15 @@ export { createEnvLookups, type EnvLookups, type EnvLookupOptions } from './peer
 export {
   writePeerBeat,
   listLivePeers,
-  removePeerRecord,
+  reapPeer,
+  removeOwnRecord,
   startPresenceBeat,
   formatBeatAge,
   HEARTBEAT_MS,
   PEER_TTL_MS,
   type BeatInput,
   type ListPeersOptions,
+  type Liveness,
   type PresenceBeatOptions,
 } from './peers/presence.js';
 

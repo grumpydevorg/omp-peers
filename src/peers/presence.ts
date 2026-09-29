@@ -2,10 +2,13 @@
  * Presence — one owner-written heartbeat file per peer process.
  *
  * `<state>/peers/<pid>.json` is written via `durableWriteJson` (sidecar +
- * fsync + copy-over, never a rename over a live file) on a 15s beat. A peer
- * is live while its beat is at most 45s old AND its pid answers
- * `process.kill(pid, 0)`. Stale records are reaped (unlinked on sight).
- * Shutdown unlinks the own record.
+ * fsync + copy-over, never a rename over a live file) on a 15s beat.
+ *
+ * Only the owner writes its record. Anyone else deletes it only once its
+ * instance is confirmed dead: the pid is gone, or the beat is stale AND the
+ * socket refuses or answers as another instance. A stale beat alone proves
+ * nothing — a peer whose event loop stalls stays listed as it was, and its
+ * next beat refreshes it. Shutdown unlinks the own record.
  */
 
 import { chmod, readdir, rm, stat } from 'node:fs/promises';
@@ -14,6 +17,7 @@ import { basename, join } from 'node:path';
 import { durableWriteJson, readJsonFile } from '../store/atomic.js';
 import { peerPath, peersDir } from '../store/paths.js';
 import type { HarnessKind, PeerRecord, PeerTodo } from '../types.js';
+import { requestPeer } from './server.js';
 
 export const HEARTBEAT_MS = 15_000;
 export const PEER_TTL_MS = 45_000;
@@ -77,8 +81,73 @@ function defaultIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
+  } catch (err) {
+    // EPERM: the process exists under another user — alive, not ours to judge dead.
+    return err instanceof Error && 'code' in err && err.code === 'EPERM';
+  }
+}
+
+/** What an observer can prove about a record's instance. `unknown` never justifies a delete. */
+export type Liveness = 'alive' | 'dead' | 'unknown';
+
+/** How long a liveness ping waits: a stalled peer answers late, so a timeout proves nothing. */
+const PROBE_TIMEOUT_MS = 1_000;
+
+/** Ping a record's socket: `dead` only on a refused/absent socket or an answer from another instance. */
+async function pingProbe(record: PeerRecord): Promise<Liveness> {
+  const reply = await requestPeer(record.socket, { t: 'ping', from: 'probe' }, PROBE_TIMEOUT_MS);
+  if (reply === undefined) return 'unknown';
+  if (reply.ok) {
+    const other = record.instanceId !== undefined && reply.id !== undefined && reply.id !== record.instanceId;
+    return other ? 'dead' : 'alive';
+  }
+  return /\b(ECONNREFUSED|ENOENT)\b/.test(reply.error ?? '') ? 'dead' : 'unknown';
+}
+
+interface Judge {
+  now: number;
+  isAlive: (pid: number) => boolean;
+  probe: (record: PeerRecord) => Promise<Liveness>;
+}
+
+function pidAlive(judge: Judge, pid: number): boolean {
+  try {
+    return judge.isAlive(pid);
   } catch {
-    return false;
+    // A failing liveness check proves nothing either way: keep the record.
+    return true;
+  }
+}
+
+/** Dead only on proof: the pid is gone, or the beat is stale and the socket disowns it. */
+async function judgeRecord(judge: Judge, record: PeerRecord): Promise<Liveness> {
+  if (!pidAlive(judge, record.pid)) return 'dead';
+  if (judge.now - record.beatAt <= PEER_TTL_MS) return 'alive';
+  try {
+    return await judge.probe(record);
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * Unlink `record`'s file after it was judged dead, unless the file changed
+ * since it was read (its owner — or a new instance on a reused pid — wrote
+ * again). Its socket goes too when the pid itself is gone.
+ */
+async function unlinkDead(stateDir: string, record: PeerRecord, judge: Judge): Promise<void> {
+  const dir = peersDir(stateDir);
+  const file = join(dir, `${record.pid}.json`);
+  let current: unknown;
+  try {
+    current = await readJsonFile<PeerRecord>(file, { retries: 1, retryDelayMs: 50 });
+  } catch {
+    return;
+  }
+  if (!isPeerRecord(current) || current.beatAt !== record.beatAt || current.instanceId !== record.instanceId) return;
+  await rm(file, { force: true }).catch(() => undefined);
+  if (process.platform !== 'win32' && !pidAlive(judge, record.pid) && record.socket.startsWith(`${dir}/`)) {
+    await rm(record.socket, { force: true }).catch(() => undefined);
   }
 }
 
@@ -134,15 +203,20 @@ export interface ListPeersOptions {
   now?: number;
   /** Liveness probe seam (default: `process.kill(pid, 0)`). */
   isAlive?: (pid: number) => boolean;
+  /** Asks a stale record's socket whether its instance still answers (default: a ping). */
+  probe?: (record: PeerRecord) => Promise<Liveness>;
+}
+
+function judgeOf(opts: ListPeersOptions): Judge {
+  return { now: opts.now ?? Date.now(), isAlive: opts.isAlive ?? defaultIsAlive, probe: opts.probe ?? pingProbe };
 }
 
 /**
- * List live peers, reaping stale records on sight: wrong-shape files, dead
- * pids, and beats older than the TTL are unlinked. Unparseable files are
- * left alone (torn reads), as are well-shaped records from a newer schema
- * version. A unix socket is unlinked only when its pid is confirmed dead —
- * a live peer keeps its socket even on a stale beat — and orphan
- * `<pid>.sock` files with no live owner are reaped too. Results sort by name.
+ * List every peer not proven dead, sorted by name, reaping the dead on
+ * sight (see the module comment for what counts as proof). A wrong-shape
+ * file is reaped only when the pid in its file name is gone. Unparseable
+ * files are left alone (torn reads), as are records from a newer schema
+ * version. Orphan `<pid>.sock` files whose pid is gone are reaped too.
  */
 export async function listLivePeers(
   stateDir: string,
@@ -156,8 +230,7 @@ export async function listLivePeers(
   } catch {
     return [];
   }
-  const now = opts.now ?? Date.now();
-  const isAlive = opts.isAlive ?? defaultIsAlive;
+  const judge = judgeOf(opts);
   const live: PeerRecord[] = [];
   const sockNames: string[] = [];
   for (const name of names) {
@@ -165,7 +238,8 @@ export async function listLivePeers(
       sockNames.push(name);
       continue;
     }
-    if (!name.endsWith('.json')) continue;
+    const owner = /^(\d+)\.json$/.exec(name)?.[1];
+    if (owner === undefined) continue;
     const file = join(dir, name);
     let parsed: unknown;
     try {
@@ -173,32 +247,18 @@ export async function listLivePeers(
     } catch {
       continue;
     }
-    if (!isPeerRecord(parsed)) {
+    if (!isPeerRecord(parsed) || parsed.pid !== Number(owner)) {
       // Forward-compat: a record with a newer `v` is skipped, not unlinked —
-      // a future peer owns it and may shape it differently. Malformed files get reaped.
+      // a future peer owns it and may shape it differently.
       const version = typeof parsed === 'object' && parsed !== null && 'v' in parsed ? parsed.v : undefined;
-      if (!(typeof version === 'number' && version > 1)) {
+      if (!(typeof version === 'number' && version > 1) && !pidAlive(judge, Number(owner))) {
         await rm(file, { force: true }).catch(() => undefined);
       }
       continue;
     }
-    if (parsed.pid !== selfPid) {
-      let alive = true;
-      try {
-        alive = isAlive(parsed.pid);
-      } catch {
-        alive = false;
-      }
-      if (!alive || now - parsed.beatAt > PEER_TTL_MS) {
-        await rm(file, { force: true }).catch(() => undefined);
-        // Only a confirmed-dead pid loses its socket: a live process with a
-        // stalled beat keeps it — unlinking a live peer's socket would
-        // strand it (ENOENT forever); its next beat rewrites the record.
-        if (!alive && process.platform !== 'win32' && parsed.socket.startsWith(`${dir}/`)) {
-          await rm(parsed.socket, { force: true }).catch(() => undefined);
-        }
-        continue;
-      }
+    if (parsed.pid !== selfPid && (await judgeRecord(judge, parsed)) === 'dead') {
+      await unlinkDead(stateDir, parsed, judge);
+      continue;
     }
     live.push(parsed);
   }
@@ -211,38 +271,25 @@ export async function listLivePeers(
       if (!/^\d+$/.test(base)) continue;
       const pid = Number(base);
       if (livePids.has(pid)) continue;
-      let alive = true;
-      try {
-        alive = isAlive(pid);
-      } catch {
-        alive = false;
-      }
-      if (!alive) await rm(join(dir, name), { force: true }).catch(() => undefined);
+      if (!pidAlive(judge, pid)) await rm(join(dir, name), { force: true }).catch(() => undefined);
     }
   }
   live.sort((a, b) => a.name.localeCompare(b.name));
   return live;
 }
 
-/** Remove one presence record (+ its unix socket on non-Windows, dead pids only). */
-export async function removePeerRecord(
-  stateDir: string,
-  pid: number,
-  opts: { isAlive?: (pid: number) => boolean } = {}
-): Promise<void> {
-  const dir = peersDir(stateDir);
-  await rm(join(dir, `${pid}.json`), { force: true }).catch(() => undefined);
-  // The socket belongs to the pid, not the record: unlinking a live pid's
-  // socket strands it. A live owner's own cleanup runs via server.stop().
-  let alive = true;
-  try {
-    alive = (opts.isAlive ?? defaultIsAlive)(pid);
-  } catch {
-    alive = false;
-  }
-  if (process.platform !== 'win32' && !alive) {
-    await rm(join(dir, `${pid}.sock`), { force: true }).catch(() => undefined);
-  }
+/**
+ * A sender's socket closed without a reply: remove `record` if — and only
+ * if — its instance is now proven dead and the file still holds it.
+ */
+export async function reapPeer(stateDir: string, record: PeerRecord, opts: ListPeersOptions = {}): Promise<void> {
+  const judge = judgeOf(opts);
+  if ((await judgeRecord(judge, record)) === 'dead') await unlinkDead(stateDir, record, judge);
+}
+
+/** The owner removes its own record on shutdown; its socket is the server's to unlink. */
+export async function removeOwnRecord(stateDir: string, pid: number): Promise<void> {
+  await rm(join(peersDir(stateDir), `${pid}.json`), { force: true }).catch(() => undefined);
 }
 
 export interface PresenceBeatOptions {

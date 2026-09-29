@@ -2,10 +2,13 @@
  * Presence — one owner-written heartbeat file per peer process.
  *
  * `<state>/peers/<pid>.json` is written via `durableWriteJson` (sidecar +
- * fsync + copy-over, never a rename over a live file) on a 15s beat. A peer
- * is live while its beat is at most 45s old AND its pid answers
- * `process.kill(pid, 0)`. Stale records are reaped (unlinked on sight).
- * Shutdown unlinks the own record.
+ * fsync + copy-over, never a rename over a live file) on a 15s beat.
+ *
+ * Only the owner writes its record. Anyone else deletes it only once its
+ * instance is confirmed dead: the pid is gone, or the beat is stale AND the
+ * socket refuses or answers as another instance. A stale beat alone proves
+ * nothing — a peer whose event loop stalls stays listed as it was, and its
+ * next beat refreshes it. Shutdown unlinks the own record.
  */
 import type { HarnessKind, PeerRecord, PeerTodo } from '../types.js';
 export declare const HEARTBEAT_MS = 15000;
@@ -28,26 +31,32 @@ export interface BeatInput {
     aliases?: string[];
     instanceId?: string;
 }
+/** What an observer can prove about a record's instance. `unknown` never justifies a delete. */
+export type Liveness = 'alive' | 'dead' | 'unknown';
 /** Write (or refresh) this process's presence record. Owner-only writer. */
 export declare function writePeerBeat(input: BeatInput): Promise<PeerRecord>;
 export interface ListPeersOptions {
     now?: number;
     /** Liveness probe seam (default: `process.kill(pid, 0)`). */
     isAlive?: (pid: number) => boolean;
+    /** Asks a stale record's socket whether its instance still answers (default: a ping). */
+    probe?: (record: PeerRecord) => Promise<Liveness>;
 }
 /**
- * List live peers, reaping stale records on sight: wrong-shape files, dead
- * pids, and beats older than the TTL are unlinked. Unparseable files are
- * left alone (torn reads), as are well-shaped records from a newer schema
- * version. A unix socket is unlinked only when its pid is confirmed dead —
- * a live peer keeps its socket even on a stale beat — and orphan
- * `<pid>.sock` files with no live owner are reaped too. Results sort by name.
+ * List every peer not proven dead, sorted by name, reaping the dead on
+ * sight (see the module comment for what counts as proof). A wrong-shape
+ * file is reaped only when the pid in its file name is gone. Unparseable
+ * files are left alone (torn reads), as are records from a newer schema
+ * version. Orphan `<pid>.sock` files whose pid is gone are reaped too.
  */
 export declare function listLivePeers(stateDir: string, selfPid: number, opts?: ListPeersOptions): Promise<PeerRecord[]>;
-/** Remove one presence record (+ its unix socket on non-Windows, dead pids only). */
-export declare function removePeerRecord(stateDir: string, pid: number, opts?: {
-    isAlive?: (pid: number) => boolean;
-}): Promise<void>;
+/**
+ * A sender's socket closed without a reply: remove `record` if — and only
+ * if — its instance is now proven dead and the file still holds it.
+ */
+export declare function reapPeer(stateDir: string, record: PeerRecord, opts?: ListPeersOptions): Promise<void>;
+/** The owner removes its own record on shutdown; its socket is the server's to unlink. */
+export declare function removeOwnRecord(stateDir: string, pid: number): Promise<void>;
 export interface PresenceBeatOptions {
     intervalMs?: number;
     onError?: (err: unknown) => void;
