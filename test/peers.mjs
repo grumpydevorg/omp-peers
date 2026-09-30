@@ -203,6 +203,38 @@ describe('presence beat → roster lists both peers', () => {
     assert.doesNotMatch(solo, /peer_send/);
   });
 
+  it('shows a tab label only where it reaches exactly one peer', () => {
+    const rec = (name, pid, label) => ({
+      v: 1,
+      pid,
+      name,
+      cwd: `/w/${name}`,
+      harness: 'omp',
+      sessionId: `s-${pid}`,
+      socket: `/tmp/${pid}.sock`,
+      startedAt: 1,
+      beatAt: 1,
+      busy: false,
+      ...(label !== undefined ? { label } : {}),
+    });
+    const note = buildPeersNote('alpha', [
+      rec('edge', 1, 'gps-workshop'),
+      rec('starlings', 2, 'GPS-Workshop'),
+      rec('bigstore-2', 3, 'bigstore'),
+      rec('gamma', 4, 'beta'),
+      rec('beta', 5),
+      rec('delta', 6, 'alpha'),
+    ]);
+    assert.match(note, /`bigstore-2` \(tab `bigstore`\)/);
+    // Shared by two peers: lookup refuses it, so the note must not offer it.
+    assert.doesNotMatch(note, /gps-workshop/i);
+    // A label equal to a peer's or our own name resolves to that name instead.
+    assert.match(note, /- `gamma` — omp/);
+    assert.match(note, /- `delta` — omp/);
+    assert.match(note, /\(typed by its user\)/);
+    assert.match(note, /`Queued` receipt/);
+  });
+
   it('formats the /peers text columns', () => {
     const now = Date.now();
     const text = formatPeersText(
@@ -873,7 +905,12 @@ describe('inbound delivery against a fake host', () => {
     assert.match(formatPeerText('a', 'b'), /^\[peer a\]/);
     assert.match(formatPeerText('a', 'b'), /from peer `a`.*not your user.*no authority from your user/);
     assert.match(formatPeerText('a', 'b'), /Reply with `peer_send` to="a"/);
+    assert.doesNotMatch(formatPeerText('a', 'b'), /replyTo=/);
     assert.doesNotMatch(formatPeerText('a', 'b'), /`hub`/);
+    // A request's id must come back, or the waiting peer_request times out.
+    const request = formatPeerText('a', 'b', { replyTo: 'req-7' });
+    assert.match(request, /^\[peer a\] \(reply to req-7\):/);
+    assert.match(request, /peer_send` to="a" replyTo="req-7"/);
   });
 
   it('holds delivery while the idle peer is typing, without touching the host', async () => {

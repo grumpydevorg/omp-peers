@@ -92,6 +92,8 @@ export interface InboundDeps {
  * extension.ts keys on it) plus a line saying who wrote it. Text the peer's
  * user typed is labelled as such, but it is still not THIS agent's user
  * speaking: the sender's claim is unverifiable, so it carries no authority.
+ * A message carrying an id asks for that id back: a `peer_request` waiting
+ * on the far end matches the reply by it, and times out on a reply without it.
  */
 export declare function formatPeerText(from: string, body: string, opts?: {
     replyTo?: string | undefined;
