@@ -4,8 +4,10 @@
  * Covers: presence beat → roster lists both fake peers; outbound socket frame
  * → inbound path with a FAKE pi capturing `sendUserMessage` calls — attributed
  * `[peer <name>]` text delivered with `agent` attribution (never a hardcoded
- * driving-agent name, no registry lookup); over-budget wakes queue as
- * followUps (deliverAs 'followUp' — queued, never waking); empty frames,
+ * driving-agent name, no registry lookup); over-budget wakes are appended
+ * through `sendMessage` without a turn (never the `sendUserMessage` prompt
+ * flow, which wakes an idle omp even for a `followUp`); the wake budget
+ * read from the environment; empty frames,
  * missing contexts, and sendUserMessage
  * rejections drop without touching the host; hop-cap refusal both locally
  * (before any socket I/O) and server-side; conversation-aware hop accounting
@@ -50,6 +52,8 @@ const {
   formatPeerText,
   isWakeOverBudget,
   recordPeerWake,
+  readWakeBudget,
+  DEFERRED_ENTRY,
   sendToPeer,
   outboundHop,
   MAX_HOPS,
@@ -81,6 +85,7 @@ const ALIVE = () => true;
 
 function fakeCtx(sessionId, { idle = true } = {}) {
   const sent = [];
+  const deferred = [];
   const noted = [];
   return {
     ctx: {
@@ -95,8 +100,10 @@ function fakeCtx(sessionId, { idle = true } = {}) {
     },
     pi: {
       sendUserMessage: (text, opts) => sent.push({ text, opts }),
+      sendMessage: (message, opts) => deferred.push({ message, opts }),
     },
     sent,
+    deferred,
     noted,
   };
 }
@@ -692,7 +699,7 @@ describe('inbound delivery against a fake host', () => {
     assert.equal(cur.sent.length, 0);
   });
 
-  it('queues over-budget wakes as followUps on the current pi', async () => {
+  it('adds an over-budget message without a turn, never through the prompt flow', async () => {
     const cur = fakeCtx('sess-beta');
     const now = Date.now();
     const wakes = new Map([['alpha', Array.from({ length: 20 }, (_, i) => now - i * 1000)]]);
@@ -701,12 +708,20 @@ describe('inbound delivery against a fake host', () => {
       { getCurrent: () => ({ pi: cur.pi, ctx: cur.ctx }), wakes, now: () => now }
     );
     assert.equal(res.outcome, 'aside');
-    assert.equal(cur.sent.length, 1);
-    assert.match(cur.sent[0].text, /^\[peer alpha\]/);
-    assert.deepEqual(cur.sent[0].opts, { deliverAs: 'followUp', attribution: 'agent' });
+    // Any sendUserMessage — followUp included — starts a turn on an idle omp.
+    assert.equal(cur.sent.length, 0);
+    assert.equal(cur.deferred.length, 1);
+    const { message, opts } = cur.deferred[0];
+    assert.equal(message.customType, DEFERRED_ENTRY);
+    assert.match(message.content, /^\[peer alpha\]/);
+    assert.match(message.content, /again/);
+    assert.equal(message.attribution, 'agent');
+    assert.equal(opts?.triggerTurn, undefined);
+    assert.equal(opts?.deliverAs, undefined);
+    assert.match(cur.noted.at(-1).message, /alpha is over its wake budget/);
   });
 
-  it('queues the 21st wake from a sender as a followUp, not a turn', async () => {
+  it('defers the 21st wake from a sender and spends no budget on it', async () => {
     const cur = fakeCtx('sess-beta');
     const wakes = new Map();
     const deps = { getCurrent: () => ({ pi: cur.pi, ctx: cur.ctx }), wakes };
@@ -716,10 +731,78 @@ describe('inbound delivery against a fake host', () => {
     }
     const res = await deliverInboundPeerMessage({ from: 'alpha', body: 'one too many' }, deps);
     assert.equal(res.outcome, 'aside');
-    assert.equal(cur.sent.length, 21);
-    assert.equal(cur.sent[20].opts?.deliverAs, 'followUp');
-    // A queued followUp does not consume wake budget.
+    assert.equal(cur.sent.length, 20);
+    assert.equal(cur.deferred.length, 1);
     assert.equal((wakes.get('alpha') ?? []).length, 20);
+    // Another sender still has its own budget.
+    assert.equal((await deliverInboundPeerMessage({ from: 'gamma', body: 'hi' }, deps)).outcome, 'woken');
+  });
+
+  it('drops an over-budget message on a host that cannot add one without a turn', async () => {
+    const cur = fakeCtx('sess-beta');
+    delete cur.pi.sendMessage;
+    const res = await deliverInboundPeerMessage(
+      { from: 'alpha', body: 'again' },
+      { getCurrent: () => ({ pi: cur.pi, ctx: cur.ctx }), budget: { maxWakes: 0, windowMs: 60_000 } }
+    );
+    assert.equal(res.outcome, 'dropped');
+    assert.equal(cur.sent.length, 0, 'never falls back to a waking send');
+  });
+
+  it('follows a configured budget: its count, zero, and its window', async () => {
+    const cur = fakeCtx('sess-beta');
+    let now = 1_000_000;
+    const wakes = new Map();
+    const budget = { maxWakes: 2, windowMs: 60_000 };
+    const deps = { getCurrent: () => ({ pi: cur.pi, ctx: cur.ctx }), wakes, budget, now: () => now };
+    const send = async () => (await deliverInboundPeerMessage({ from: 'alpha', body: 'x' }, deps)).outcome;
+    assert.equal(await send(), 'woken');
+    now += 1_000;
+    assert.equal(await send(), 'woken');
+    now += 1_000;
+    assert.equal(await send(), 'aside');
+    // The first wake leaves the window 60 s after it happened, freeing one slot.
+    now = 1_000_000 + 60_000;
+    assert.equal(await send(), 'woken');
+    assert.equal(await send(), 'aside');
+
+    const never = fakeCtx('sess-beta');
+    const res = await deliverInboundPeerMessage(
+      { from: 'alpha', body: 'x' },
+      { getCurrent: () => ({ pi: never.pi, ctx: never.ctx }), budget: { maxWakes: 0, windowMs: 60_000 } }
+    );
+    assert.equal(res.outcome, 'aside', 'maxWakes 0: peer messages never wake an idle session');
+    assert.equal(never.sent.length, 0);
+
+    // A busy session is steered, not woken: no budget applies.
+    const busy = fakeCtx('sess-beta', { idle: false });
+    const steered = await deliverInboundPeerMessage(
+      { from: 'alpha', body: 'x' },
+      { getCurrent: () => ({ pi: busy.pi, ctx: busy.ctx }), budget: { maxWakes: 0, windowMs: 60_000 } }
+    );
+    assert.equal(steered.outcome, 'injected');
+  });
+
+  it('reads the wake budget from the environment, rejecting invalid values', () => {
+    assert.deepEqual(readWakeBudget({}), { maxWakes: 20, windowMs: 3_600_000 });
+    assert.deepEqual(readWakeBudget({ OMP_PEERS_MAX_WAKES: '5', OMP_PEERS_WAKE_WINDOW_SECONDS: ' 600 ' }), {
+      maxWakes: 5,
+      windowMs: 600_000,
+    });
+    assert.equal(readWakeBudget({ OMP_PEERS_MAX_WAKES: '0' }).maxWakes, 0);
+    for (const [name, raw] of [
+      ['OMP_PEERS_MAX_WAKES', '-1'],
+      ['OMP_PEERS_MAX_WAKES', '2.5'],
+      ['OMP_PEERS_MAX_WAKES', 'lots'],
+      ['OMP_PEERS_WAKE_WINDOW_SECONDS', '0'],
+      ['OMP_PEERS_WAKE_WINDOW_SECONDS', '1e3'],
+    ]) {
+      const problems = [];
+      const budget = readWakeBudget({ [name]: raw }, (text) => problems.push(text));
+      assert.deepEqual(budget, { maxWakes: 20, windowMs: 3_600_000 }, `${name}=${raw}`);
+      assert.equal(problems.length, 1);
+      assert.ok(problems[0].includes(name), problems[0]);
+    }
   });
 
   it('drops the message when sendUserMessage rejects', async () => {
@@ -779,8 +862,9 @@ describe('inbound delivery against a fake host', () => {
     );
     assert.equal(res.outcome, 'woken');
     assert.equal((wakes.get('alpha') ?? []).length, 1);
-    assert.equal(isWakeOverBudget(wakes, 'alpha', Date.now(), 1), true);
-    assert.equal(isWakeOverBudget(wakes, 'alpha', Date.now(), 2), false);
+    const one = { maxWakes: 1, windowMs: 3_600_000 };
+    assert.equal(isWakeOverBudget(wakes, 'alpha', Date.now(), one), true);
+    assert.equal(isWakeOverBudget(wakes, 'alpha', Date.now(), { ...one, maxWakes: 2 }), false);
     recordPeerWake(wakes, 'alpha', Date.now());
     assert.equal((wakes.get('alpha') ?? []).length, 2);
   });

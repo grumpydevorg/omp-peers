@@ -101,6 +101,15 @@ export interface ExtensionHostLike {
     content: string,
     options?: { deliverAs?: 'steer' | 'followUp' | 'aside'; attribution?: 'user' | 'agent' }
   ) => void | Promise<void>;
+  /**
+   * Append a custom message to the session (omp/pi `pi.sendMessage`). Without
+   * `triggerTurn` it starts no turn: idle, it is added to the transcript;
+   * mid-run, it steers that run.
+   */
+  sendMessage?: (
+    message: { customType: string; content: string; display?: boolean; attribution?: 'user' | 'agent' },
+    options?: { triggerTurn?: boolean; deliverAs?: 'steer' | 'followUp' | 'nextTurn' | 'aside' }
+  ) => unknown;
   /** Persist a custom entry in the current session (omp `pi.appendEntry`); read back from `getBranch`. */
   appendEntry?: (customType: string, data: unknown) => void;
   getSessionName?: () => string | undefined;
