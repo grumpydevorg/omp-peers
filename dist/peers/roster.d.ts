@@ -23,6 +23,9 @@ export interface RosterMessage {
  * Identity line + contact rule + peer definition + one row per peer (solo
  * compacts to one line). Peers that left the peer list are not rows: nobody
  * can reach them. A node that left itself gets one line saying so.
+ *
+ * A row shows a tab label only when that label reaches its peer: lookup
+ * refuses an alias two peers share, and an exact peer name wins over it.
  */
 export declare function buildPeersNote(ownName: string, all: PeerRecord[], opts?: {
     left?: boolean;
