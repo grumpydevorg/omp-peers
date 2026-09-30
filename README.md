@@ -108,6 +108,7 @@ On macOS and Linux, any directory under `~/.omp/agent/extensions/` holding this 
 - **No crash on undelivered `peer_request`.** A request to an unknown, refused or dead peer rejected a promise nothing awaited; the unhandled rejection terminated the whole omp process. It now resolves with the receipt. By [hezirel](https://github.com/hezirel/omp-peers).
 - **Ack messages.** `peer_send ack:true` delivers a pure receipt as a dim toast: no wake, no model turn, no reply. By [hezirel](https://github.com/hezirel/omp-peers).
 - **No crash on malformed socket input.** 1.4.0 cast each decoded frame to its type unchecked, so a single line such as `null` sent to a peer socket threw inside a fire-and-forget handler and terminated the omp process. Frames and replies are now checked field by field and refused with `bad frame` / `bad response`, a reply split across socket chunks is reassembled instead of misread, and frame handlers can no longer leak a rejection.
+- **The wake budget holds.** Over the budget, 1.4.0 and the 2.0.0 previews queued a message with `sendUserMessage(…, { deliverAs: 'followUp' })`, and omp drains a follow-up queued on an idle session straight into a new turn: every over-budget message still woke the agent, and none was counted. An over-budget message is now added to the transcript with `sendMessage` and no `triggerTurn`, so the agent reads it on its next turn and nothing starts one. The budget is configurable; see [Configuration](#configuration).
 - **Peers stay out of the host's agent registry.** 1.4.0 registered every remote instance in omp's own agent list as a fake subagent, so `write agent://all` broadcasts reached other instances, Agent Hub listed them, and every spawned subagent could message them. omp-peers reaches peers only through its `peer_*` tools.
 - **Peer messages say they carry no user authority.** Every delivered message ends with a line telling the agent it came from a peer, not its user. They are also sent with `agent` attribution, which omp uses for billing and prompt caching; the model still receives them as ordinary user-role text, so that line is the only thing marking them as a peer's.
 - **Tools callable by name.** `peer_send`, `peer_status` and `peer_request` register as `essential`; omp mounted them as `write xd://` devices before, so agents following the note's "call `peer_send`" failed their first attempt.
@@ -154,11 +155,22 @@ Agents reply with `peer_send` too — every delivered message carries the exact 
 - **Explicit names only.** There is no broadcast/address-all; you message exactly the peer you name.
 - **Relay cap.** Agent-to-agent relays carry a hop counter; chains more than 4 hops from a human prompt are refused with an explanation.
 - **Coalescing.** Bursts from one sender within 400 ms are delivered as a single message — one wake, not N. Every sender in the burst gets the burst's own outcome.
-- **Wake budget.** 20 real wakes per peer per rolling hour; excess queues as follow-ups — delivered without waking the session or starting a turn.
+- **Wake budget.** A peer may start at most 20 turns in an idle session per rolling hour ([configurable](#configuration)). A message over the budget is added to the session's transcript without starting a turn: the agent reads it on its next turn, whatever starts that turn, and its sender's receipt says `Queued`. Messages to a busy session steer the running turn and are never counted.
 - **Typing protection.** A message arriving while the peer is typing never wipes their composer draft: idle delivery holds (sender sees `Held`, `/peers` shows `held N`) and injects on submit, latest after 2 min; mid-turn steers still land immediately. A held message that can no longer be delivered (more than 20 waiting, the peer shut down) is dropped with its sender told why, as a toast. Verify: A types without submitting, B sends (receipt `Held`), A submits (message injects, draft intact).
 - **Addressed delivery.** Each message names the instance its recipient's name resolved to; a receiver that is not that instance refuses it unread, and the sender looks the name up once more.
 - **Per-session boundaries.** Messages are injected into the peer's own session; no tools execute across processes. What tells the receiving agent a message is a peer's and carries no authority is the text itself: the `[peer <name>]` prefix and the closing line. omp's `agent` attribution changes billing and caching, not the role the model sees, so this is a convention the agent follows, not an enforced boundary. Text sent with `/msg` or the `/peers` Message action is labelled as typed by the sender's user; the label is informational too, since any local process could claim it. A burst mixing typed and agent-written messages is labelled as agent text. Peers are never added to the host's agent registry, so `agent://` messaging, broadcasts and subagents stay local to each instance.
 - **Malformed input.** Every frame and reply is checked field by field; a malformed line is refused and never reaches the host.
+
+## Configuration
+
+The wake budget is read from the environment of the omp process once, when the peer starts. It is your setting, not the agent's: no tool or command changes it, and an agent's shell cannot change the environment of the omp it runs in. Restart omp to apply a change.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `OMP_PEERS_MAX_WAKES` | `20` | Turns one sender may start in this idle session per window. `0` means peer messages never wake it. |
+| `OMP_PEERS_WAKE_WINDOW_SECONDS` | `3600` | Length of the rolling window. At least `1`. |
+
+A value that is not a whole number in range is ignored with a warning, and the default applies. The count is kept in memory per sender, so a restart starts it afresh.
 
 ## How it works
 

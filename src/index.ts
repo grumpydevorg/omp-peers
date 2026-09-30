@@ -81,8 +81,13 @@ export {
   formatPeerText,
   isWakeOverBudget,
   recordPeerWake,
+  readWakeBudget,
   MAX_WAKES_PER_PEER_PER_HOUR,
   WAKE_WINDOW_MS,
+  DEFAULT_WAKE_BUDGET,
+  DEFERRED_ENTRY,
+  MAX_WAKES_ENV,
+  WAKE_WINDOW_ENV,
   HOLD_TIMEOUT_MS,
   MAX_HELD_BATCHES,
   HOLD_POLL_MS,
@@ -90,6 +95,7 @@ export {
   type CurrentHost,
   type InboundOutcome,
   type InboundDeps,
+  type WakeBudget,
   type HeldBatch,
 } from './peers/inbound.js';
 export { sendToPeer, outboundHop, type HopState, type OutboundDeps } from './peers/outbound.js';

@@ -10,19 +10,66 @@
  *
  * STRUCTURAL RULE: the session is NEVER snapshotted at boot. The current
  * `{pi, ctx}` comes from a live getter (refreshed on every host event).
- * Over-budget wakes queue as asides
- * (`pi.sendUserMessage(text, {deliverAs:'aside'})`), as does delivery on a
- * bridgeless host — and always on the CURRENT pi, never a
- * factory-captured one.
+ * Over-budget wakes are appended to the transcript without starting a turn
+ * (`pi.sendMessage` with no `triggerTurn`), always on the CURRENT pi, never
+ * a factory-captured one.
  */
 
 import type { InboundMessage } from './server.js';
 import type { CommandContextLike, ExtensionHostLike } from './host.js';
 import { peerKey } from './ids.js';
 
-/** Per-peer wakes allowed per rolling hour before excess queues as asides. */
+/** Default wakes one sender may spend per window before its messages wait for the next turn. */
 export const MAX_WAKES_PER_PEER_PER_HOUR = 20;
+/** Default length of the rolling wake window. */
 export const WAKE_WINDOW_MS = 3_600_000;
+/** Session entry type of a peer message that waited for the next turn instead of waking the agent. */
+export const DEFERRED_ENTRY = 'omp-peers.deferred';
+
+/**
+ * How many turns one sender may start in an idle session per rolling window.
+ * `maxWakes: 0` means peer messages never wake an idle session.
+ */
+export interface WakeBudget {
+  readonly maxWakes: number;
+  readonly windowMs: number;
+}
+
+export const DEFAULT_WAKE_BUDGET: WakeBudget = {
+  maxWakes: MAX_WAKES_PER_PEER_PER_HOUR,
+  windowMs: WAKE_WINDOW_MS,
+};
+
+/** Environment variable holding the wakes each sender may spend per window. */
+export const MAX_WAKES_ENV = 'OMP_PEERS_MAX_WAKES';
+/** Environment variable holding the wake window, in seconds. */
+export const WAKE_WINDOW_ENV = 'OMP_PEERS_WAKE_WINDOW_SECONDS';
+
+/**
+ * The wake budget from the environment of the omp process, read once when
+ * the node starts. It is the user's setting, not the agent's: no tool or
+ * command changes it, and an agent's shell cannot reach the environment of
+ * the process it runs in. An unset variable takes the default; an invalid one
+ * takes the default and is reported through `onInvalid`.
+ */
+export function readWakeBudget(
+  env: Readonly<Record<string, string | undefined>>,
+  onInvalid: (text: string) => void = () => {}
+): WakeBudget {
+  const read = (name: string, fallback: number, min: number): number => {
+    const raw = env[name]?.trim() ?? '';
+    if (raw === '') return fallback;
+    const value = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+    if (Number.isSafeInteger(value) && value >= min) return value;
+    onInvalid(`peers: ignoring ${name}=${JSON.stringify(raw)} (expected a whole number ≥ ${min}); using ${fallback}`);
+    return fallback;
+  };
+  return {
+    maxWakes: read(MAX_WAKES_ENV, DEFAULT_WAKE_BUDGET.maxWakes, 0),
+    windowMs: read(WAKE_WINDOW_ENV, DEFAULT_WAKE_BUDGET.windowMs / 1000, 1) * 1000,
+  };
+}
+
 /** A batch held while the peer types waits at most this long before delivering anyway. */
 export const HOLD_TIMEOUT_MS = 120_000;
 /** Upper bound on batches waiting for the peer's composer to clear. */
@@ -52,6 +99,11 @@ export interface HeldBatch {
   receivedAt: number;
 }
 
+/**
+ * `aside` (wire value, kept for older senders): over the wake budget, the
+ * message was added to the transcript and the agent reads it on its next
+ * turn; no turn was started for it.
+ */
 export type InboundOutcome = 'injected' | 'woken' | 'aside' | 'dropped' | 'held' | 'acked';
 
 export interface InboundDeps {
@@ -63,6 +115,8 @@ export interface InboundDeps {
   receivedAt?: number;
   /** In-memory per-peer wake timestamps; owned by the caller. */
   wakes?: Map<string, number[]>;
+  /** Wakes allowed per sender per window; the default when absent. */
+  budget?: WakeBudget;
   now?: () => number;
 }
 
@@ -92,40 +146,51 @@ export function formatPeerText(
   ].join('\n');
 }
 
-/** True when `from` already consumed its hourly wake budget (prunes first). */
+/** True when `from` already consumed its wake budget (prunes first). */
 export function isWakeOverBudget(
   wakes: Map<string, number[]>,
   from: string,
   now: number,
-  max: number = MAX_WAKES_PER_PEER_PER_HOUR
+  budget: WakeBudget = DEFAULT_WAKE_BUDGET
 ): boolean {
   const stamps = wakes.get(from) ?? [];
-  const fresh = stamps.filter((t) => now - t < WAKE_WINDOW_MS);
+  const fresh = stamps.filter((t) => now - t < budget.windowMs);
   if (fresh.length === 0) wakes.delete(from);
   else if (fresh.length !== stamps.length) wakes.set(from, fresh);
-  return fresh.length >= max;
+  return fresh.length >= budget.maxWakes;
 }
 
-/** Record one real wake for `from` (prunes expired stamps). */
-export function recordPeerWake(wakes: Map<string, number[]>, from: string, now: number): void {
+/** Record one real wake for `from` (prunes stamps older than the window). */
+export function recordPeerWake(
+  wakes: Map<string, number[]>,
+  from: string,
+  now: number,
+  windowMs: number = WAKE_WINDOW_MS
+): void {
   const stamps = wakes.get(from) ?? [];
   stamps.push(now);
   wakes.set(
     from,
-    stamps.filter((t) => now - t < WAKE_WINDOW_MS)
+    stamps.filter((t) => now - t < windowMs)
   );
 }
 
-// `followUp` queues without starting a turn in either host state — that is
-// the wake budget's intent; `aside` would still wake an idle session.
-// Returns the failure message when the host rejects the call.
-async function aside(pi: ExtensionHostLike, ctx: CommandContextLike, text: string): Promise<string | undefined> {
+/**
+ * Add an over-budget message to the transcript WITHOUT starting a turn.
+ * `sendUserMessage` cannot do this: every mode of it runs the prompt flow,
+ * and omp 18.4 drains a `followUp` queued on an idle session straight into a
+ * new turn. `sendMessage` without `triggerTurn` appends the message and
+ * returns; if a run started meanwhile, it steers that run instead, which
+ * costs no wake either. Returns the failure message when the host refuses.
+ */
+async function defer(pi: ExtensionHostLike, ctx: CommandContextLike, text: string): Promise<string | undefined> {
+  if (typeof pi.sendMessage !== 'function') return 'host cannot add a message without starting a turn';
   try {
-    await pi.sendUserMessage?.(text, { deliverAs: 'followUp', attribution: 'agent' });
+    await pi.sendMessage({ customType: DEFERRED_ENTRY, content: text, display: true, attribution: 'agent' });
     return undefined;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    warn(ctx, `peers: aside delivery failed (${message})`);
+    warn(ctx, `peers: could not queue an over-budget message (${message})`);
     return message;
   }
 }
@@ -179,10 +244,19 @@ export async function deliverInboundPeerMessage(
     return { outcome: 'dropped', detail: 'no sendUserMessage on host' };
   }
 
-  if (willWake && isWakeOverBudget(wakes, wakeKey, now)) {
-    const failure = await aside(cur.pi, cur.ctx, text);
+  const budget = deps.budget ?? DEFAULT_WAKE_BUDGET;
+  if (willWake && isWakeOverBudget(wakes, wakeKey, now, budget)) {
+    const failure = await defer(cur.pi, cur.ctx, text);
     if (failure !== undefined) return { outcome: 'dropped', detail: failure };
-    return { outcome: 'aside', detail: 'hourly wake budget exceeded' };
+    try {
+      cur.ctx.ui.notify(
+        `peers: ${from} is over its wake budget — its message waits for this agent's next turn`,
+        'info'
+      );
+    } catch {
+      // Toast is best-effort.
+    }
+    return { outcome: 'aside', detail: 'wake budget exceeded' };
   }
 
   // Typing protection: injecting while idle runs the host prompt flow, which
@@ -205,7 +279,7 @@ export async function deliverInboundPeerMessage(
     // still reads a user-role message, so formatPeerText's closing line is
     // what tells it a peer, not its user, is speaking.
     await cur.pi.sendUserMessage(text, { attribution: 'agent' });
-    if (willWake) recordPeerWake(wakes, wakeKey, now);
+    if (willWake) recordPeerWake(wakes, wakeKey, now, budget.windowMs);
     return { outcome: willWake ? 'woken' : 'injected' };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

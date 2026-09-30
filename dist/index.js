@@ -20,7 +20,7 @@ export { createHeldQueue } from './peers/held.js';
 // Transport.
 export { MAX_HOPS, COALESCE_MS, PEER_REQUEST_TIMEOUT_MS, SOCKET_IDLE_MS, MAX_FRAME_BYTES, WRONG_PEER, LEFT, peerSocketAddress, startPeerServer, requestPeer, } from './peers/server.js';
 // Delivery.
-export { deliverInboundPeerMessage, formatPeerText, isWakeOverBudget, recordPeerWake, MAX_WAKES_PER_PEER_PER_HOUR, WAKE_WINDOW_MS, HOLD_TIMEOUT_MS, MAX_HELD_BATCHES, HOLD_POLL_MS, } from './peers/inbound.js';
+export { deliverInboundPeerMessage, formatPeerText, isWakeOverBudget, recordPeerWake, readWakeBudget, MAX_WAKES_PER_PEER_PER_HOUR, WAKE_WINDOW_MS, DEFAULT_WAKE_BUDGET, DEFERRED_ENTRY, MAX_WAKES_ENV, WAKE_WINDOW_ENV, HOLD_TIMEOUT_MS, MAX_HELD_BATCHES, HOLD_POLL_MS, } from './peers/inbound.js';
 export { sendToPeer, outboundHop } from './peers/outbound.js';
 // Roster.
 export { buildPeersNote, appendNoteToMessages, } from './peers/roster.js';

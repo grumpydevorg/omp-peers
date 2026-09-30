@@ -25,7 +25,7 @@ import { detectHarness, PRESENCE_ENTRY, readLeft, readNativeTodos, readTitleSour
 import { chooseBase, directoryBase, isValidPeerName, nameRoster, peerKey } from './peers/ids.js';
 import { createEnvLookups } from './peers/context.js';
 import { createHeldQueue } from './peers/held.js';
-import { deliverInboundPeerMessage, HOLD_POLL_MS, MAX_HELD_BATCHES, } from './peers/inbound.js';
+import { deliverInboundPeerMessage, HOLD_POLL_MS, MAX_HELD_BATCHES, readWakeBudget, } from './peers/inbound.js';
 import { sendToPeer } from './peers/outbound.js';
 import { HEARTBEAT_MS, listLivePeers, reapPeer, removeOwnRecord, startPresenceBeat, writePeerBeat, } from './peers/presence.js';
 import { appendNoteToMessages, buildPeersNote } from './peers/roster.js';
@@ -74,6 +74,7 @@ async function deliverHeld(st, batch) {
         },
         receivedAt: batch.receivedAt,
         wakes: st.wakes,
+        budget: st.budget,
     });
     // Only a real delivery advances the relay chain — 'held'/'dropped'/'aside'
     // never reached the agent, so they must not consume a hop.
@@ -343,6 +344,8 @@ function ensureNode(pi, ctx) {
     }
     try {
         const stateDir = resolveStateDir();
+        const budgetProblems = [];
+        const budget = readWakeBudget(process.env, (text) => budgetProblems.push(text));
         const st = {
             stateDir,
             pid: process.pid,
@@ -358,6 +361,7 @@ function ensureNode(pi, ctx) {
             lookups: createEnvLookups({ onError: (text) => logOf(st, text) }),
             peers: [],
             wakes: new Map(),
+            budget,
             lastInboundPeer: undefined,
             lastInboundHop: 0,
             held: newHeldQueue(() => st),
@@ -378,6 +382,8 @@ function ensureNode(pi, ctx) {
         st.sessionId = hostRead(st, 'session id', () => ctx.sessionManager?.getSessionId?.() ?? '', '');
         assignName(st, directoryBase(cwd), []);
         node = st;
+        for (const text of budgetProblems)
+            warnOf(st, text);
         void Promise.all([ensureStateDirs(stateDir), st.lookups.prime(cwd)])
             .then(() => {
             if (st.stopped)
@@ -411,7 +417,7 @@ function ensureNode(pi, ctx) {
                                 return '';
                             }
                         },
-                        ...(live !== undefined ? { wakes: live.wakes } : {}),
+                        ...(live !== undefined ? { wakes: live.wakes, budget: live.budget } : {}),
                     });
                     // Only a real delivery advances the relay chain — 'held'/'dropped'/
                     // 'aside' never reached the agent, so they must not consume a hop.

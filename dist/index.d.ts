@@ -13,7 +13,7 @@ export { writePeerBeat, listLivePeers, reapPeer, removeOwnRecord, startPresenceB
 export { createBeatLoop, type BeatLoop } from './peers/beat.js';
 export { createHeldQueue, type HeldQueue, type HeldQueueDeps } from './peers/held.js';
 export { MAX_HOPS, COALESCE_MS, PEER_REQUEST_TIMEOUT_MS, SOCKET_IDLE_MS, MAX_FRAME_BYTES, WRONG_PEER, LEFT, peerSocketAddress, startPeerServer, requestPeer, type InboundMessage, type PeerServerOptions, type PeerServerHandle, } from './peers/server.js';
-export { deliverInboundPeerMessage, formatPeerText, isWakeOverBudget, recordPeerWake, MAX_WAKES_PER_PEER_PER_HOUR, WAKE_WINDOW_MS, HOLD_TIMEOUT_MS, MAX_HELD_BATCHES, HOLD_POLL_MS, type InboundCarrier, type CurrentHost, type InboundOutcome, type InboundDeps, type HeldBatch, } from './peers/inbound.js';
+export { deliverInboundPeerMessage, formatPeerText, isWakeOverBudget, recordPeerWake, readWakeBudget, MAX_WAKES_PER_PEER_PER_HOUR, WAKE_WINDOW_MS, DEFAULT_WAKE_BUDGET, DEFERRED_ENTRY, MAX_WAKES_ENV, WAKE_WINDOW_ENV, HOLD_TIMEOUT_MS, MAX_HELD_BATCHES, HOLD_POLL_MS, type InboundCarrier, type CurrentHost, type InboundOutcome, type InboundDeps, type WakeBudget, type HeldBatch, } from './peers/inbound.js';
 export { sendToPeer, outboundHop, type HopState, type OutboundDeps } from './peers/outbound.js';
 export { buildPeersNote, appendNoteToMessages, type RosterMessage, } from './peers/roster.js';
 export { detectHarness, readTitleSource, readNativeTodos, readLeft, PRESENCE_ENTRY, MAX_PEER_TODOS, MAX_PEER_TODO_TEXT_CHARS, type CommandContextLike, type ExtensionHostLike, type UiLike, type AutocompleteItemLike, type SelectOption, } from './peers/host.js';
