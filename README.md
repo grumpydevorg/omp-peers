@@ -2,7 +2,7 @@
 
 **Cross-instance messaging for [Oh My Pi](https://github.com/can1357/oh-my-pi) and pi** — every running agent session on a machine sees every other, live, by name, and can message it. omp's own IRC (`write agent://…`) only reaches agents inside one process; omp-peers connects separate omp instances.
 
-> **Preview of a proposed omp-peers 2.0.0**, published from [grumpydevorg/omp-peers](https://github.com/grumpydevorg/omp-peers) while the changes are offered upstream as pull requests to [nikkoxgonzales/omp-peers](https://github.com/nikkoxgonzales/omp-peers).
+> **Preview of a proposed omp-peers 2.0.0**, published from [grumpydevorg/omp-peers](https://github.com/grumpydevorg/omp-peers). The crash and isolation fixes are offered upstream in [nikkoxgonzales/omp-peers#1](https://github.com/nikkoxgonzales/omp-peers/pull/1); the rest is not yet offered.
 
 This builds on omp-peers 1.4.0 with the fixes and features listed under [Changes since 1.4.0](#changes-since-140); they were developed as the omp-irc fork and are carried here commit by commit. Next on the roadmap are durable message receipts, channels, and addressable subagents.
 

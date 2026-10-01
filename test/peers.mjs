@@ -203,8 +203,10 @@ describe('presence beat → roster lists both peers', () => {
     assert.doesNotMatch(solo, /peer_send/);
   });
 
-  it('shows a tab label only where it reaches exactly one peer', () => {
-    const rec = (name, pid, label) => ({
+  it('shows a tab label only where sending to it reaches that peer', () => {
+    // A published record carries its tab label in `aliases`, which is what
+    // lookup resolves; `aliases` overrides that for the edge cases.
+    const rec = (name, pid, label, aliases = label !== undefined ? [label] : undefined) => ({
       v: 1,
       pid,
       name,
@@ -216,6 +218,7 @@ describe('presence beat → roster lists both peers', () => {
       beatAt: 1,
       busy: false,
       ...(label !== undefined ? { label } : {}),
+      ...(aliases !== undefined ? { aliases } : {}),
     });
     const note = buildPeersNote('alpha', [
       rec('edge', 1, 'gps-workshop'),
@@ -224,6 +227,11 @@ describe('presence beat → roster lists both peers', () => {
       rec('gamma', 4, 'beta'),
       rec('beta', 5),
       rec('delta', 6, 'alpha'),
+      // Unique label, but another peer still answers to it as a name it gave up.
+      rec('epsilon', 7, 'review'),
+      rec('zeta', 8, undefined, ['review']),
+      // Label not yet published as an alias: lookup cannot resolve it.
+      rec('eta', 9, 'fresh-tab', []),
     ]);
     assert.match(note, /`bigstore-2` \(tab `bigstore`\)/);
     // Shared by two peers: lookup refuses it, so the note must not offer it.
@@ -231,6 +239,9 @@ describe('presence beat → roster lists both peers', () => {
     // A label equal to a peer's or our own name resolves to that name instead.
     assert.match(note, /- `gamma` — omp/);
     assert.match(note, /- `delta` — omp/);
+    assert.match(note, /- `epsilon` — omp/);
+    assert.doesNotMatch(note, /tab `review`/);
+    assert.doesNotMatch(note, /fresh-tab/);
     assert.match(note, /\(typed by its user\)/);
     assert.match(note, /`Queued` receipt/);
   });
