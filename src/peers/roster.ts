@@ -13,6 +13,7 @@
  */
 
 import type { PeerRecord } from '../types.js';
+import { lookupPeer } from './ids.js';
 
 export interface RosterMessage {
   role: string;
@@ -24,8 +25,10 @@ export interface RosterMessage {
  * compacts to one line). Peers that left the peer list are not rows: nobody
  * can reach them. A node that left itself gets one line saying so.
  *
- * A row shows a tab label only when that label reaches its peer: lookup
- * refuses an alias two peers share, and an exact peer name wins over it.
+ * A row shows a tab label only when sending to that label reaches that row:
+ * the note asks `lookupPeer` itself, so a label that is unpublished, shared,
+ * shadowed by a peer name, or shared with another peer's retained old name
+ * is never offered. A label equal to our own name is left out too.
  */
 export function buildPeersNote(ownName: string, all: PeerRecord[], opts: { left?: boolean } = {}): string {
   if (opts.left === true) {
@@ -40,15 +43,12 @@ export function buildPeersNote(ownName: string, all: PeerRecord[], opts: { left?
     return [`<peers>`, `You are \`${ownName}\`. No other peers are live right now.`, `</peers>`].join('\n');
   // pid in every row: suffixed collision names (e.g. `test-peer` vs
   // `test-peer-22148`) must never be mistakable for self.
-  const names = new Set([ownName, ...peers.map((peer) => peer.name)].map((name) => name.toLowerCase()));
-  const labelCounts = new Map<string, number>();
-  for (const peer of peers) {
-    const key = peer.label?.toLowerCase();
-    if (key !== undefined) labelCounts.set(key, (labelCounts.get(key) ?? 0) + 1);
-  }
+  const own = ownName.toLowerCase();
   const reachingLabel = (peer: PeerRecord): string | undefined => {
-    const key = peer.label?.toLowerCase();
-    return key !== undefined && labelCounts.get(key) === 1 && !names.has(key) ? peer.label : undefined;
+    const label = peer.label;
+    if (label === undefined || label.toLowerCase() === own) return undefined;
+    const hit = lookupPeer(label, peers);
+    return hit.found && hit.record.pid === peer.pid ? label : undefined;
   };
   const rows = [...peers]
     .sort((a, b) => a.name.localeCompare(b.name))
