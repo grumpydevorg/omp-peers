@@ -151,6 +151,7 @@ async function unlinkDead(stateDir: string, record: PeerRecord, judge: Judge): P
   await rm(file, { force: true }).catch(() => undefined);
   if (process.platform !== 'win32' && !pidAlive(judge, record.pid) && record.socket.startsWith(`${dir}/`)) {
     await rm(record.socket, { force: true }).catch(() => undefined);
+    await rm(`${record.socket}.bind.lock`, { force: true }).catch(() => undefined);
   }
 }
 
@@ -220,7 +221,8 @@ function judgeOf(opts: ListPeersOptions): Judge {
  * sight (see the module comment for what counts as proof). A wrong-shape
  * file is reaped only when the pid in its file name is gone. Unparseable
  * files are left alone (torn reads), as are records from a newer schema
- * version. Orphan `<pid>.sock` files whose pid is gone are reaped too.
+ * version. Orphan endpoint files (`<pid>.sock`, `<pid>-<tag>.sock` and their
+ * `.bind.lock`) whose pid is gone are reaped too.
  */
 export async function listLivePeers(
   stateDir: string,
@@ -238,7 +240,7 @@ export async function listLivePeers(
   const live: PeerRecord[] = [];
   const sockNames: string[] = [];
   for (const name of names) {
-    if (name.endsWith('.sock')) {
+    if (name.endsWith('.sock') || name.endsWith('.sock.bind.lock')) {
       sockNames.push(name);
       continue;
     }
@@ -267,13 +269,14 @@ export async function listLivePeers(
     live.push(parsed);
   }
   if (process.platform !== 'win32') {
-    // Orphan sockets: a dead pid's `<pid>.sock` survives record reaping when
-    // the record was already gone. Skip names that don't parse to a pid.
+    // Orphan endpoints: a dead pid's socket and bind lock survive record
+    // reaping when the record was already gone. Skip names that don't parse
+    // to a pid.
     const livePids = new Set(live.map((p) => p.pid));
     for (const name of sockNames) {
-      const base = name.slice(0, -'.sock'.length);
-      if (!/^\d+$/.test(base)) continue;
-      const pid = Number(base);
+      const owner = /^(\d+)(?:-[A-Za-z0-9]{1,8})?\.sock(?:\.bind\.lock)?$/.exec(name)?.[1];
+      if (owner === undefined) continue;
+      const pid = Number(owner);
       if (livePids.has(pid)) continue;
       if (!pidAlive(judge, pid)) await rm(join(dir, name), { force: true }).catch(() => undefined);
     }

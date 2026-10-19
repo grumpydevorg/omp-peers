@@ -49,7 +49,8 @@ export interface ListPeersOptions {
  * sight (see the module comment for what counts as proof). A wrong-shape
  * file is reaped only when the pid in its file name is gone. Unparseable
  * files are left alone (torn reads), as are records from a newer schema
- * version. Orphan `<pid>.sock` files whose pid is gone are reaped too.
+ * version. Orphan endpoint files (`<pid>.sock`, `<pid>-<tag>.sock` and their
+ * `.bind.lock`) whose pid is gone are reaped too.
  */
 export declare function listLivePeers(stateDir: string, selfPid: number, opts?: ListPeersOptions): Promise<PeerRecord[]>;
 /**

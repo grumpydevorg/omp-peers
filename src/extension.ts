@@ -433,12 +433,13 @@ function ensureNode(pi: ExtensionHostLike, ctx: CommandContextLike): NodeState |
     const stateDir = resolveStateDir();
     const budgetProblems: string[] = [];
     const budget = readWakeBudget(process.env, (text) => budgetProblems.push(text));
+    const instanceId = randomUUID();
     const st: NodeState = {
       stateDir,
       pid: process.pid,
-      instanceId: randomUUID(),
+      instanceId,
       startedAt: Date.now(),
-      socketAddress: peerSocketAddress(stateDir, process.pid),
+      socketAddress: peerSocketAddress(stateDir, process.pid, instanceId),
       name: '',
       base: '',
       label: undefined,
@@ -557,7 +558,8 @@ async function stopNode(st: NodeState): Promise<void> {
   st.stopped = true;
   // A successor node for this same pid may already exist (session_switch →
   // ensureNode after `node` was cleared). When it does, this teardown must
-  // not delete the successor's live record or socket file.
+  // not delete the successor's live record. Endpoints are per boot, so the
+  // successor's never overlaps this one's.
   const hasSuccessor = (): boolean => {
     const successor = liveNode();
     return successor !== undefined && successor !== st;
@@ -585,7 +587,7 @@ async function stopNode(st: NodeState): Promise<void> {
   }
   st.pendingReplies.clear();
   try {
-    st.server?.stop({ unlinkSocket: !hasSuccessor() });
+    st.server?.stop();
   } catch {
     // Shutdown never throws.
   }

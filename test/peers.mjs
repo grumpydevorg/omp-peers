@@ -24,7 +24,7 @@
  * Plain Node ESM — no test-runner dependency (also runs under `node --test`).
  */
 
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createConnection, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -82,6 +82,8 @@ const {
 } = await import('../dist/index.js');
 
 const ALIVE = () => true;
+/** The endpoint this process's live node published: endpoints are per boot, so read, never derive. */
+const ownSocket = async () => JSON.parse(await readFile(peerPath(process.pid, STATE), 'utf8')).socket;
 
 function fakeCtx(sessionId, { idle = true } = {}) {
   const sent = [];
@@ -118,7 +120,7 @@ describe('presence beat → roster lists both peers', () => {
       harness: 'omp',
       sessionId: 'sess-a',
       model: 'm1',
-      socket: peerSocketAddress(STATE, 47111),
+      socket: peerSocketAddress(STATE, 47111, 'test'),
       startedAt: 1000,
       busy: false,
     });
@@ -130,7 +132,7 @@ describe('presence beat → roster lists both peers', () => {
       harness: 'pi',
       sessionId: 'sess-b',
       model: 'm2',
-      socket: peerSocketAddress(STATE, 47222),
+      socket: peerSocketAddress(STATE, 47222, 'test'),
       startedAt: 2000,
       busy: true,
     });
@@ -161,7 +163,7 @@ describe('presence beat → roster lists both peers', () => {
       name: 'ghost',
       cwd: join(STATE, 'g'),
       harness: 'pi',
-      socket: peerSocketAddress(STATE, 2147483647),
+      socket: peerSocketAddress(STATE, 2147483647, 'test'),
       startedAt: 1,
     });
     // Expired beat with a live pid: a stalled peer, not a dead one.
@@ -177,7 +179,7 @@ describe('presence beat → roster lists both peers', () => {
         harness: 'omp',
         sessionId: '',
         model: '',
-        socket: peerSocketAddress(STATE, 47999),
+        socket: peerSocketAddress(STATE, 47999, 'test'),
         startedAt: 1,
         beatAt: Date.now() - PEER_TTL_MS - 1000,
         busy: false,
@@ -304,7 +306,7 @@ describe('presence beat → roster lists both peers', () => {
         name: 'future',
         cwd: join(STATE, 'f'),
         harness: 'omp',
-        socket: peerSocketAddress(STATE, 49876),
+        socket: peerSocketAddress(STATE, 49876, 'test'),
         startedAt: 1,
         beatAt: Date.now(),
         busy: false,
@@ -320,7 +322,7 @@ describe('presence beat → roster lists both peers', () => {
     it("unlinks a disowned stale record but keeps a live pid's socket file", async () => {
       const dir = join(STATE, 'peers');
       await mkdir(dir, { recursive: true });
-      const sock = peerSocketAddress(STATE, 49877);
+      const sock = peerSocketAddress(STATE, 49877, 'test');
       await writeFile(sock, '');
       await writeFile(
         peerPath(49877, STATE),
@@ -348,7 +350,7 @@ describe('presence beat → roster lists both peers', () => {
 });
 
 describe('outbound frame → inbound path', () => {
-  const addrB = peerSocketAddress(STATE, 47333);
+  const addrB = peerSocketAddress(STATE, 47333, 'test');
   const seen = [];
   let deliveries = 0;
   let server;
@@ -473,7 +475,7 @@ describe('outbound frame → inbound path', () => {
   });
 
   describe('malformed replies', () => {
-    const addrR = peerSocketAddress(STATE, 47555);
+    const addrR = peerSocketAddress(STATE, 47555, 'test');
     let answer = '';
     let replier;
     before(async () => {
@@ -507,7 +509,7 @@ describe('outbound frame → inbound path', () => {
   });
 
   it('reports held receipts with typing text', async () => {
-    const addrC = peerSocketAddress(STATE, 47444);
+    const addrC = peerSocketAddress(STATE, 47444, 'test');
     const heldServer = startPeerServer({
       address: addrC,
       ownName: () => 'gamma',
@@ -541,7 +543,7 @@ describe('outbound frame → inbound path', () => {
   });
 
   it('keeps concurrent senders as separate batches', async () => {
-    const addr = peerSocketAddress(STATE, 47555);
+    const addr = peerSocketAddress(STATE, 47555, 'test');
     const seen = [];
     const srv = startPeerServer({
       address: addr,
@@ -570,7 +572,7 @@ describe('outbound frame → inbound path', () => {
   });
 
   it('reports the max hop across a coalesced batch', async () => {
-    const addr = peerSocketAddress(STATE, 47556);
+    const addr = peerSocketAddress(STATE, 47556, 'test');
     const seen = [];
     const srv = startPeerServer({
       address: addr,
@@ -604,7 +606,7 @@ describe('outbound frame → inbound path', () => {
       harness: 'pi',
       sessionId: '',
       model: '',
-      socket: peerSocketAddress(STATE, 47998),
+      socket: peerSocketAddress(STATE, 47998, 'test'),
       startedAt: 1,
       beatAt: Date.now(),
       busy: false,
@@ -620,7 +622,7 @@ describe('outbound frame → inbound path', () => {
   });
 
   it('maps a dropped receipt to failure text, not Delivered', async () => {
-    const addr = peerSocketAddress(STATE, 47557);
+    const addr = peerSocketAddress(STATE, 47557, 'test');
     const srv = startPeerServer({
       address: addr,
       ownName: () => 'dropper',
@@ -655,7 +657,7 @@ describe('outbound frame → inbound path', () => {
   });
 
   it('decodes a UTF-8 frame split mid-character across writes', async () => {
-    const addr = peerSocketAddress(STATE, 47558);
+    const addr = peerSocketAddress(STATE, 47558, 'test');
     let received;
     const seenPromise = new Promise((resolve) => {
       received = resolve;
@@ -1270,7 +1272,7 @@ describe('shutdown unlink', () => {
       name: 'tmp',
       cwd: join(STATE, 't'),
       harness: 'pi',
-      socket: peerSocketAddress(STATE, 47777),
+      socket: peerSocketAddress(STATE, 47777, 'test'),
       startedAt: 1,
     });
     let live = await listLivePeers(STATE, 0, { isAlive: ALIVE });
@@ -1342,7 +1344,7 @@ describe('conversation-aware hop accounting', () => {
     // The last inbound came from session sid-convo, then named `convo`; it is
     // now `convo-renamed`. Hop state is keyed by session id, so replying to
     // the new name is still the same conversation, not a relay.
-    const addr = peerSocketAddress(STATE, 47667);
+    const addr = peerSocketAddress(STATE, 47667, 'test');
     const srv = startPeerServer({ address: addr, ownName: () => 'convo-renamed', onMessage: async () => 'injected' });
     await new Promise((r) => setTimeout(r, 500));
     try {
@@ -1374,7 +1376,7 @@ describe('conversation-aware hop accounting', () => {
   });
 
   it('derives hop 4, not 5, for a conversation after a hop-4 delivery', async () => {
-    const addr = peerSocketAddress(STATE, 47666);
+    const addr = peerSocketAddress(STATE, 47666, 'test');
     const seen = [];
     const srv = startPeerServer({
       address: addr,
@@ -1530,7 +1532,7 @@ describe('activity, todos, and request/reply tools', () => {
       name: 'todo-peer',
       cwd: join(STATE, 'td'),
       harness: 'pi',
-      socket: peerSocketAddress(STATE, 47666),
+      socket: peerSocketAddress(STATE, 47666, 'test'),
       startedAt: 1,
       busy: false,
       activity: 'fixing login',
@@ -1794,7 +1796,7 @@ describe('ack-class messages', () => {
   });
 
   it('server lets two back-to-back acks from one peer bypass the coalesce queue', async () => {
-    const addr = peerSocketAddress(STATE, 47888);
+    const addr = peerSocketAddress(STATE, 47888, 'test');
     const srv = startPeerServer({
       address: addr,
       ownName: () => 'quiet',
@@ -1819,7 +1821,7 @@ describe('ack-class messages', () => {
   });
 
   it('sendToPeer carries ack on the wire and formats a toast receipt', async () => {
-    const addr = peerSocketAddress(STATE, 47889);
+    const addr = peerSocketAddress(STATE, 47889, 'test');
     const seen = [];
     const srv = startPeerServer({
       address: addr,
@@ -1873,7 +1875,7 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
     harness: 'omp',
     sessionId: `s-${name}`,
     model: '',
-    socket: peerSocketAddress(STATE, pid),
+    socket: peerSocketAddress(STATE, pid, 'test'),
     startedAt: 1,
     beatAt: Date.now(),
     busy: false,
@@ -1912,7 +1914,7 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
   it('a typed /msg does not reset a relay chain the agent is carrying', async () => {
     // The target must be a live pid, or the presence listing reaps it.
     const targetPid = process.ppid;
-    const targetAddr = peerSocketAddress(STATE, targetPid);
+    const targetAddr = peerSocketAddress(STATE, targetPid, 'test');
     const hops = [];
     const target = startPeerServer({
       address: targetAddr,
@@ -1952,8 +1954,8 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
       sessionManager: { getSessionId: () => 'sess-relayer' },
       isIdle: () => true,
     });
-    const ownAddr = peerSocketAddress(STATE, process.pid);
     await new Promise((r) => setTimeout(r, 700));
+    const ownAddr = await ownSocket();
     try {
       // A relay reaches this agent three hops from its human prompt.
       const inbound = await requestPeer(ownAddr, {
@@ -1981,7 +1983,7 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
   it("tells a held message's sender at shutdown that it will not be delivered", async () => {
     // A live pid: the node's own listing reaps records of pids that are gone.
     const senderPid = process.ppid;
-    const senderAddr = peerSocketAddress(STATE, senderPid);
+    const senderAddr = peerSocketAddress(STATE, senderPid, 'test');
     const notices = [];
     const sender = startPeerServer({
       address: senderAddr,
@@ -2023,7 +2025,7 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
     });
     await new Promise((r) => setTimeout(r, 700));
     try {
-      const inbound = await requestPeer(peerSocketAddress(STATE, process.pid), {
+      const inbound = await requestPeer(await ownSocket(), {
         t: 'msg',
         from: 'sender',
         fromId: 'sid-sender-0001',
@@ -2091,7 +2093,7 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
       await new Promise((r) => setTimeout(r, 300));
       assert.equal(await present(), true, 'a subagent shutdown removed the root peer');
       assert.equal(
-        (await requestPeer(peerSocketAddress(STATE, process.pid), { t: 'ping', from: 'x' }))?.ok,
+        (await requestPeer(await ownSocket(), { t: 'ping', from: 'x' }))?.ok,
         true,
         'the root peer still answers'
       );
@@ -2103,7 +2105,7 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
   });
 
   it("labels a human frame as typed by the peer's user, still without authority", async () => {
-    const addr = peerSocketAddress(STATE, 47901);
+    const addr = peerSocketAddress(STATE, 47901, 'test');
     const seen = [];
     const srv = startPeerServer({
       address: addr,
@@ -2135,7 +2137,7 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
   });
 
   it('an agent-written message in the same burst makes the batch agent text', async () => {
-    const addr = peerSocketAddress(STATE, 47902);
+    const addr = peerSocketAddress(STATE, 47902, 'test');
     const seen = [];
     const srv = startPeerServer({
       address: addr,
