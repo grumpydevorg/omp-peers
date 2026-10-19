@@ -2104,6 +2104,39 @@ describe('messages the user types (/msg, the /peers Message action)', () => {
     assert.equal(await present(), false, "the root's shutdown removes it");
   });
 
+  it('two node boots in one process each answer on their own endpoint, and the successor outlives the predecessor', async () => {
+    // Same pid, different boot ids: a successor binds while its predecessor
+    // still listens. Bindings refuse an endpoint a live server holds, so the
+    // two must never share one.
+    const pid = 48600;
+    await mkdir(join(STATE, 'peers'), { recursive: true });
+    const start = (id) =>
+      startPeerServer({
+        address: peerSocketAddress(STATE, pid, id),
+        ownName: () => 'same-pid',
+        ownId: () => id,
+        onMessage: async () => 'injected',
+      });
+    const predecessor = start('boot-one');
+    const successor = start('boot-two');
+    try {
+      assert.equal(await predecessor.listening, true, 'the predecessor listens');
+      assert.equal(await successor.listening, true, 'the successor listens while the predecessor still does');
+      assert.equal((await requestPeer(predecessor.address, { t: 'ping', from: 'x' }))?.id, 'boot-one');
+      assert.equal((await requestPeer(successor.address, { t: 'ping', from: 'x' }))?.id, 'boot-two');
+      predecessor.stop();
+      await new Promise((r) => setTimeout(r, 100));
+      assert.deepEqual(await requestPeer(successor.address, { t: 'ping', from: 'x' }), {
+        ok: true,
+        name: 'same-pid',
+        id: 'boot-two',
+      });
+    } finally {
+      predecessor.stop();
+      successor.stop();
+    }
+  });
+
   it("labels a human frame as typed by the peer's user, still without authority", async () => {
     const addr = peerSocketAddress(STATE, 47901, 'test');
     const seen = [];
