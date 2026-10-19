@@ -55,9 +55,10 @@ export interface PeerRecord {
   /** Model id (empty string when the host exposes none). */
   model: string;
   /**
-   * Socket address to reach this peer: a named-pipe path
-   * (`\\.\pipe\peers-<pid>`) on Windows, a unix-socket path
-   * (`<state>/peers/<pid>.sock`) elsewhere.
+   * Endpoint to reach this peer, one per node boot: a named-pipe path
+   * (`\\.\pipe\peers-<pid>-<tag>`) on Windows, a unix-socket path
+   * (`<state>/peers/<pid>-<tag>.sock`) elsewhere. Peers before 2.0.0-preview.5
+   * publish `<pid>` without a tag; senders dial whatever is published.
    */
   socket: string;
   /** `Date.now()` at process start (display only). */

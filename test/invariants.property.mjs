@@ -47,7 +47,7 @@ after(async () => {
 /** A server that records what reached its host. */
 async function serve(pid, id) {
   const reached = [];
-  const address = peerSocketAddress(STATE, pid);
+  const address = peerSocketAddress(STATE, pid, 'test');
   const server = startPeerServer({
     address,
     ownName: () => `srv-${id}`,
@@ -174,7 +174,8 @@ describe('I3: only the owner, or proof of death, deletes a presence file', () =>
     const dir = join(state, 'peers');
     await mkdir(dir, { recursive: true });
     for (const e of entries) {
-      const socket = peerSocketAddress(state, e.pid);
+      // Peers before per-boot endpoints left `<pid>.sock`; both shapes are reaped alike.
+      const socket = e.legacy ? join(dir, `${e.pid}.sock`) : peerSocketAddress(state, e.pid, `inst-${e.pid}`);
       const body = e.malformed
         ? { v: 1, pid: e.pid, name: 'broken' }
         : {
@@ -183,7 +184,10 @@ describe('I3: only the owner, or proof of death, deletes a presence file', () =>
             beatAt: e.stale ? NOW - PEER_TTL_MS - 1 : NOW,
           };
       if (e.file) await writeFile(join(dir, `${e.pid}.json`), `${JSON.stringify(body)}\n`);
-      if (e.socketFile) await writeFile(socket, '');
+      if (e.socketFile) {
+        await writeFile(socket, '');
+        await writeFile(`${socket}.bind.lock`, '');
+      }
     }
     return { state, dir };
   }
@@ -203,6 +207,7 @@ describe('I3: only the owner, or proof of death, deletes a presence file', () =>
       malformed: fc.boolean(),
       file: fc.boolean(),
       socketFile: fc.boolean(),
+      legacy: fc.boolean(),
     }),
     { selector: (e) => e.pid, maxLength: 8 }
   );
@@ -223,8 +228,10 @@ describe('I3: only the owner, or proof of death, deletes a presence file', () =>
             assert.equal(await present(join(dir, `${e.pid}.json`)), !dead, `record of ${JSON.stringify(e)}`);
           }
           if (e.socketFile) {
-            // A socket belongs to its pid: only a gone pid loses it.
-            assert.equal(await present(peerSocketAddress(state, e.pid)), e.pidAlive, `socket of ${JSON.stringify(e)}`);
+            // An endpoint and its bind lock belong to their pid: only a gone pid loses them.
+            const socket = e.legacy ? join(dir, `${e.pid}.sock`) : peerSocketAddress(state, e.pid, `inst-${e.pid}`);
+            assert.equal(await present(socket), e.pidAlive, `socket of ${JSON.stringify(e)}`);
+            assert.equal(await present(`${socket}.bind.lock`), e.pidAlive, `bind lock of ${JSON.stringify(e)}`);
           }
         }
         const expected = es.filter((e) => e.file && !e.malformed && e.pidAlive && !(e.stale && e.probe === 'dead'));
@@ -254,7 +261,7 @@ describe('I3: only the owner, or proof of death, deletes a presence file', () =>
 
   it('the ping probe calls dead only a refused socket or another instance answering', async () => {
     const pid = 48201;
-    const socket = peerSocketAddress(STATE, pid);
+    const socket = peerSocketAddress(STATE, pid, 'test');
     const listed = () =>
       listLivePeers(STATE, 0, { now: NOW, isAlive: () => true }).then((live) => live.some((l) => l.pid === pid));
     const write = (instanceId) =>
@@ -348,7 +355,7 @@ describe('I5: every accepted message ends exactly once, as its receipt says', ()
     await fc.assert(
       fc.asyncProperty(fc.integer({ min: 1, max: 4 }), outcome, fc.boolean(), async (burst, result, stopInWindow) => {
         pid += 1;
-        const address = peerSocketAddress(STATE, pid);
+        const address = peerSocketAddress(STATE, pid, 'test');
         const calls = [];
         const server = startPeerServer({
           address,
@@ -486,7 +493,7 @@ describe('I6: a record is replaced atomically', { skip: process.platform === 'wi
 describe('I7: a record is published only once its socket listens', () => {
   it('listening settles true exactly when the socket accepts, false on a failed or aborted listen', async () => {
     const ok = startPeerServer({
-      address: peerSocketAddress(STATE, 48500),
+      address: peerSocketAddress(STATE, 48500, 'test'),
       ownName: () => 'l',
       ownId: () => 'l-id',
       onMessage: async () => 'injected',
@@ -495,7 +502,7 @@ describe('I7: a record is published only once its socket listens', () => {
     assert.equal((await requestPeer(ok.address, { t: 'ping', from: 'x' }))?.ok, true);
     ok.stop();
     const aborted = startPeerServer({
-      address: peerSocketAddress(STATE, 48501),
+      address: peerSocketAddress(STATE, 48501, 'test'),
       ownName: () => 'a',
       ownId: () => 'a-id',
       onMessage: async () => 'injected',
@@ -568,7 +575,7 @@ describe('I8: a node that left lets nothing reach its host', () => {
           let left = false;
           const reached = new Set();
           const server = startPeerServer({
-            address: peerSocketAddress(STATE, pid),
+            address: peerSocketAddress(STATE, pid, 'test'),
             ownName: () => 'leaver',
             ownId: () => 'leaver-id',
             coalesceMs: 30,

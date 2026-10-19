@@ -1,11 +1,14 @@
 /**
- * Socket transport between peer processes.
+ * Peer protocol over the local line transport (`transport.ts`: omp's native
+ * IPC inside omp, `node:net` elsewhere).
  *
- * Address seam: Windows serves a named pipe (`\\.\pipe\peers-<pid>`),
- * everywhere else a unix socket (`<state>/peers/<pid>.sock`). Both sides go
- * through `node:net` with a plain string address, so one code path covers
- * both. Frames are newline-delimited JSON (`PeerFrame`); every frame gets a
- * one-line `PeerReply`.
+ * Address: one endpoint per node boot — `<state>/peers/<pid>-<tag>.sock`, a
+ * named pipe `\\.\pipe\peers-<pid>-<tag>` on Windows — so a successor node in
+ * the same process never contends for its predecessor's endpoint. Frames are
+ * newline-delimited JSON (`PeerFrame`); every frame gets a one-line
+ * `PeerReply`. A received line over `MAX_FRAME_BYTES` closes the connection
+ * without a reply, so `requestPeer` refuses an oversized frame before
+ * writing any of it.
  *
  * Inbound policy lives here: hop cap (4 — a chain of agent-to-agent relays
  * past a human prompt is refused, never relayed) and 400ms per-sender burst
@@ -16,18 +19,21 @@ import type { PeerFrame, PeerReply } from '../types.js';
 export declare const MAX_HOPS = 4;
 /** Burst window: frames from one sender inside it become a single wake. */
 export declare const COALESCE_MS = 400;
-/** Socket round-trip timeout for outbound sends. */
+/** Round-trip timeout for outbound sends. */
 export declare const PEER_REQUEST_TIMEOUT_MS = 8000;
-/** Idle server-side sockets are destroyed after this long without a frame. */
+/** Idle server-side connections are closed after this long without a frame. */
 export declare const SOCKET_IDLE_MS = 30000;
-/** Largest buffered frame per socket before the connection is dropped. */
+/** Largest line, in UTF-8 bytes with its LF, either side accepts. */
 export declare const MAX_FRAME_BYTES = 1048576;
 /** Reply error for a message addressed to another instance than the one listening here. */
 export declare const WRONG_PEER = "wrong peer";
 /** Reply error from a node that has left the peer list. */
 export declare const LEFT = "left";
-/** Where this peer listens (and where others reach it). */
-export declare function peerSocketAddress(stateDir: string, pid: number): string;
+/**
+ * Where this node boot listens (and where others reach it). The tag is the
+ * first 8 alphanumerics of `instanceId`; reaping matches `<pid>-<tag>.sock`.
+ */
+export declare function peerSocketAddress(stateDir: string, pid: number, instanceId: string): string;
 export interface InboundMessage {
     from: string;
     /** Sender's root session id, when the sender is 2.0.0 or later. */
@@ -64,10 +70,8 @@ export interface PeerServerHandle {
      * a record pointing at a socket not yet listening turns sends away.
      */
     listening: Promise<boolean>;
-    /** `unlinkSocket: false` leaves the unix socket path for a successor node. */
-    stop(opts?: {
-        unlinkSocket?: boolean;
-    }): void;
+    /** Stop serving and remove this boot's endpoint. */
+    stop(): void;
 }
 /**
  * Serve one peer address. `onMessage` runs once per coalesced batch and its
@@ -75,7 +79,8 @@ export interface PeerServerHandle {
  */
 export declare function startPeerServer(opts: PeerServerOptions): PeerServerHandle;
 /**
- * One request/response round trip to a peer socket. Resolves `undefined`
- * when the socket closes before replying (peer gone — caller reaps).
+ * One request/response round trip to a peer endpoint. Resolves `undefined`
+ * when the connection closes before replying (peer gone — caller reaps).
+ * Connect failures carry their errno code (`ECONNREFUSED: …`).
  */
 export declare function requestPeer(address: string, frame: PeerFrame, timeoutMs?: number): Promise<PeerReply | undefined>;
