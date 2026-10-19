@@ -206,7 +206,8 @@ describe('I3: only the owner, or proof of death, deletes a presence file', () =>
       probe: fc.constantFrom('alive', 'dead', 'unknown'),
       malformed: fc.boolean(),
       file: fc.boolean(),
-      socketFile: fc.boolean(),
+      // Endpoint files exist only on POSIX; a Windows endpoint is a named pipe, not a file.
+      socketFile: process.platform === 'win32' ? fc.constant(false) : fc.boolean(),
       legacy: fc.boolean(),
     }),
     { selector: (e) => e.pid, maxLength: 8 }
